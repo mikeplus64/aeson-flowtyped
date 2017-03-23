@@ -1,0 +1,24 @@
+name: aeson-flowtyped
+license: BSD3
+license-file: LICENSE
+author: Mike Ledger <mike@quasimal.com>
+category: Web
+
+library:
+  source-dirs: src
+  exposed-modules: Data.Aeson.Flow
+  dependencies:
+  - base
+  - aeson
+  - text
+  - bytestring
+  - vector
+  - template-haskell
+  - containers
+  - unordered-containers
+  - lens
+  - reflection
+  - tagged
+  - recursion-schemes
+  ghc-options: -Wall -threaded -O2
+
