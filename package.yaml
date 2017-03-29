@@ -20,5 +20,7 @@ library:
   - reflection
   - tagged
   - recursion-schemes
+  - wl-pprint
+  - free
   ghc-options: -Wall -threaded -O2
 

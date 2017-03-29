@@ -33,6 +33,7 @@ import           Data.List              (intersperse)
 import           Data.Monoid            hiding (Alt, Any, Sum)
 import           Data.Proxy
 import           Data.Reflection
+import qualified Text.PrettyPrint.Leijen as PP
 import           Data.Text              (Text)
 import qualified Data.Text              as T
 import qualified Data.Text.Encoding     as T
@@ -94,81 +95,52 @@ type FlowType = Fix FlowTypeF
 instance Plated FlowType where
   plate f (Fix a) = Fix <$> traverse f a
 
-encodeFlowType :: FlowType -> TL.Text
-encodeFlowType = TLB.toLazyText . go
-  where
-    go :: FlowType -> TLB.Builder
-    go (Fix t) = case t of
-      Object objAttrs ->
-        wrap "{" "}" . comma
-        . map (\(name, ftype) -> ft name <> ": " <> go ftype)
-        . H.toList
-        $! objAttrs
-      Map objMapAttrs ->
-        wrap "{" "}" . comma . V.toList
-        . V.map (\(name, ftype) -> wrap "[" "]" $! ft name <> ": " <> go ftype)
-        $! objMapAttrs
-      Array elemType -> "Array<" <> go elemType <> ">"
-      Tuple tupTypes -> wrap "[" "]" . comma . V.map go $! tupTypes
-      Poly name applic -> ft (varName name) <> wrap "<" ">" (comma (V.map go applic))
-      PolyVar name -> ft (varName name)
-      Alt a b -> go a <> "|" <> go b
-      Fun argTypes returnType ->
-        (wrap "(" ")"
-         . comma
-         . V.map (\(name, ftype) -> ft name <> ": " <> go ftype)
-         $! argTypes) <> " => " <> go returnType
-      Prim pt -> case pt of
-        String -> "string"
-        Boolean -> "boolean"
-        Number -> "number"
-        Any -> "any"
-        Void -> "void"
-      Tag tag -> go (Fix (Literal (A.String tag)))
-      Nullable t' -> "?" <> go t'
-      Literal v -> ft . T.decodeUtf8 . BL.toStrict . A.encode $! v
+text :: Text -> PP.Doc
+text = PP.text . T.unpack
 
-    {-# INLINE ft #-}
-    ft :: Text -> TLB.Builder
-    ft = TLB.fromText
+ppAlts :: [FlowType] -> FlowType -> PP.Doc
+ppAlts alts (Fix f) = case f of
+  Alt a b -> ppAlts (a:alts) b
+  x       -> PP.encloseSep PP.empty PP.empty
+             (PP.string "| ")
+             (map pp (reverse (Fix x:alts)))
 
-    {-# INLINE comma #-}
-    comma :: Foldable f => f TLB.Builder -> TLB.Builder
-    comma = mconcat . intersperse ", " . toList
+braceList :: [PP.Doc] -> PP.Doc
+braceList = PP.encloseSep PP.lbrace PP.rbrace (PP.comma PP.<> PP.space)
 
-    {-# INLINE wrap #-}
-    wrap :: TLB.Builder -> TLB.Builder -> TLB.Builder -> TLB.Builder
-    wrap start end = \mid -> start <> mid <> end
+ppJson :: A.Value -> PP.Doc
+ppJson v = case v of
+  A.String t -> PP.squotes (text t)
+  A.Number n -> PP.string (show n)
+  A.Bool t -> if t then PP.string "true" else PP.string "false"
+  A.Null -> PP.string "null"
+  A.Object obj ->
+    braceList
+    (map
+     (\(name, fty) -> text name PP.<+> PP.colon PP.<+> ppJson fty)
+     (H.toList obj))
 
-cleanUp :: Options -> FlowType -> FlowType
-cleanUp opts ft
-  = ft
-  & bool (allNullaryToStringTag opts && allNullaryObjs ft) makeNullaryStringTags
-  where
-    bool True  f x = f x
-    bool False _ x = x
-
-allNullaryObjs :: FlowType -> Bool
-allNullaryObjs ft = case unfix ft of
-  Alt a b -> allNullaryObjs a && allNullaryObjs b
-  Object o | H.size o == 2 -> case (,)
-                                   <$> H.lookup "tag" o
-                                   <*> H.lookup "contents" o of
-    Just (Fix (Tag _), Fix (Prim Void)) -> True
-    _                                   -> False
-  _ -> False
-
-
-makeNullaryStringTags :: FlowType -> FlowType
-makeNullaryStringTags (Fix a) = Fix $ case trace ("DO " ++ show a ++ "\n") a of
-  Object o -> case H.lookup "tag" o of
-    Just (Fix (Tag t)) -> Literal (A.String t)
-    _                  -> a
-  _ -> a
-
-class KnownBool (a :: Bool) where truth :: Either (a :~: 'True) (a :~: 'False)
-instance KnownBool 'True where truth = Left Refl
-instance KnownBool 'False where truth = Right Refl
+pp :: FlowType -> PP.Doc
+pp (Fix ft) = case ft of
+  Object hm -> braceList
+    (map
+     (\(name, fty) -> text name PP.<> PP.colon PP.<+> pp fty)
+     (H.toList hm))
+  Array a -> PP.string "Array" PP.<> PP.angles (pp a)
+  Tuple t -> PP.list (map pp (V.toList t))
+  Alt a b -> ppAlts [a] b
+  
+  Prim pt -> case pt of
+    Boolean -> PP.text "boolean"
+    Number -> PP.text "number"
+    String -> PP.text "string"
+    Void -> PP.text "void"
+    Any -> PP.text "any"
+  Nullable a -> PP.char '?' PP.<> pp a
+  Literal a -> ppJson a
+  Tag t -> PP.squotes (text t)
+  Name t -> text t
+  _ -> PP.empty
 
 class FlowTyped a where
   flowType :: Options -> Proxy a -> (Text, FlowType)
