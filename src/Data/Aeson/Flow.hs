@@ -15,41 +15,43 @@
 {-# LANGUAGE Rank2Types            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeInType            #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 module Data.Aeson.Flow where
 import           Control.Lens.Plated
 import qualified Data.Aeson             as A
-import           Data.Aeson.Types       (Options (..), SumEncoding (..),
-                                         defaultOptions)
-import qualified Data.ByteString.Lazy   as BL
-import           Data.Foldable
+import           Data.Aeson.Types       (Options (..), SumEncoding (..))
 import           Data.Functor.Classes
 import           Data.Functor.Foldable
 import           Data.HashMap.Strict    (HashMap)
 import qualified Data.HashMap.Strict    as H
-import           Data.List              (intersperse)
-import           Data.Monoid            hiding (Alt, Any, Sum)
 import           Data.Proxy
 import           Data.Reflection
+import qualified Data.Void as Void
 import qualified Text.PrettyPrint.Leijen as PP
 import           Data.Text              (Text)
 import qualified Data.Text              as T
-import qualified Data.Text.Encoding     as T
 import qualified Data.Text.Lazy         as TL
-import qualified Data.Text.Lazy.Builder as TLB
-import           Data.Type.Equality
 import           Data.Vector            (Vector)
 import qualified Data.Vector            as V
 import           GHC.Generics
 import           GHC.TypeLits
-import           Debug.Trace
+
+--------------------------------------------------------------------------------
+-- Magical newtype for injecting showsPrec into any arbitrary Show
 
 inj :: Proxy s -> a -> Inj s a
 inj _ = Inj
 newtype Inj s a = Inj a
+-- needs UndecidableInstances
 instance Reifies s (Int -> a -> ShowS) => Show (Inj s a) where
   showsPrec i (Inj a) = reflect (Proxy :: Proxy s) i a
+
+data Showy f a = forall s. Reifies s (Int -> a -> ShowS) => Showy (f (Inj s a))
+instance Show1 (Showy FlowTypeF) where
+  liftShowsPrec _ _ i (Showy a) = showsPrec i a
 
 --------------------------------------------------------------------------------
 
@@ -63,7 +65,6 @@ data PrimType
 
 newtype Var = Var { varName :: Text }
   deriving (Show, Read, Eq, Ord)
-
 
 data FlowTypeF a
   = Object !(HashMap Text a)
@@ -80,11 +81,6 @@ data FlowTypeF a
   | Poly !Var !(Vector a)
   | PolyVar !Var
   deriving (Show, Eq, Functor, Traversable, Foldable, Generic)
-
-data Showy f a = forall s. Reifies s (Int -> a -> ShowS) => Showy (f (Inj s a))
-
-instance Show1 (Showy FlowTypeF) where
-  liftShowsPrec _ _ i (Showy a) = showsPrec i a
 
 instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
@@ -110,6 +106,7 @@ braceList = PP.encloseSep PP.lbrace PP.rbrace (PP.comma PP.<> PP.space)
 
 ppJson :: A.Value -> PP.Doc
 ppJson v = case v of
+  A.Array a  -> PP.list (map ppJson (V.toList a))
   A.String t -> PP.squotes (text t)
   A.Number n -> PP.string (show n)
   A.Bool t -> if t then PP.string "true" else PP.string "false"
@@ -129,7 +126,6 @@ pp (Fix ft) = case ft of
   Array a -> PP.string "Array" PP.<> PP.angles (pp a)
   Tuple t -> PP.list (map pp (V.toList t))
   Alt a b -> ppAlts [a] b
-  
   Prim pt -> case pt of
     Boolean -> PP.text "boolean"
     Number -> PP.text "number"
@@ -285,11 +281,18 @@ instance (GFlowRecord f, GFlowRecord g) =>
       gx = gflowRecordFields opt (Proxy :: Proxy (g x))
     in
       H.union fx gx
-  deriving (Generic, FlowTyped, A.ToJSON)
-
-thing () = flowType defaultOptions (Proxy :: Proxy A)
 
 {-
+data A0 = A1 | B1 | C1
+  deriving (Generic, FlowTyped, A.ToJSON)
+
+data A = A A0 String A0 | B { b :: Int, c :: Double } | C Int
+  deriving (Generic, FlowTyped, A.ToJSON)
+
+t = flowType defaultOptions (Proxy :: Proxy A)
+a = A.genericToJSON defaultOptions{ allNullaryToStringTag = True } (A A1 "a" A1)
+
+
 
 >>> data A = A { asdf :: Either Int String } deriving (Generic)
 >>> :t from (undefined :: A)
