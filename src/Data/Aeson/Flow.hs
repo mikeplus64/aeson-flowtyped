@@ -24,7 +24,6 @@ import           Data.Aeson.Types       (Options (..), SumEncoding (..),
                                          defaultOptions)
 import qualified Data.ByteString.Lazy   as BL
 import           Data.Foldable
-import           Data.Function
 import           Data.Functor.Classes
 import           Data.Functor.Foldable
 import           Data.HashMap.Strict    (HashMap)
@@ -214,7 +213,6 @@ gfieldName opt _ =
 
 instance (KnownSymbol conName, GFlowRecord r) =>
          GFlowVal (C1 ('MetaCons conName fx 'True) r) where
-
   gflowVal opt p = Fix $ case sumEncoding opt of
     TaggedObject tfn _ -> Object $!
       H.insert (T.pack tfn) (Fix (Tag tagName))
@@ -223,12 +221,11 @@ instance (KnownSymbol conName, GFlowRecord r) =>
     ObjectWithSingleField -> Object [(tagName, Fix (Object next))]
     TwoElemArray -> Tuple [Fix (Tag tagName), Fix (Object next)]
     where
-      next = gflowRecordFields opt (Proxy :: Proxy (r x))
+      next = gflowRecordFields opt (fmap unM1 p)
       tagName = gconstrName opt p
 
 instance (KnownSymbol conName, GFlowVal r) =>
          GFlowVal (C1 ('MetaCons conName fx 'False) r) where
-
   gflowVal opt p = Fix $ case sumEncoding opt of
     TaggedObject tfn cfn ->
       Object
@@ -239,7 +236,7 @@ instance (KnownSymbol conName, GFlowVal r) =>
     ObjectWithSingleField -> Object [(tagName, next)]
     TwoElemArray -> Tuple [Fix (Tag tagName), next]
     where
-      next@(Fix n) = gflowVal opt (Proxy :: Proxy (r x))
+      next@(Fix n) = gflowVal opt (fmap unM1 p)
       tagName = gconstrName opt p
 
 instance GFlowVal f =>
