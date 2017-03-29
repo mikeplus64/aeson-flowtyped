@@ -145,11 +145,43 @@ pp (Fix ft) = case ft of
 
 class FlowTyped a where
   flowType :: Options -> Proxy a -> (Text, FlowType)
+
+  isPrim :: Proxy a -> Bool
+  isPrim _ = False
+
   default flowType :: (Generic a, GFlowTyped (Rep a))
                    => Options
                    -> Proxy a
                    -> (Text, FlowType)
-  flowType opts p = cleanUp opts <$> gflowType opts (fmap from p)
+  flowType opt p = gflowType opt (fmap from p)
+
+instance FlowTyped Int where
+  isPrim  _ = True
+  flowType _ _ = ("Int", Fix (Prim Number))
+
+instance FlowTyped Float where
+  isPrim  _ = True
+  flowType _ _ = ("Float", Fix (Prim Number))
+
+instance FlowTyped Double where
+  isPrim  _ = True
+  flowType _ _ = ("Double", Fix (Prim Number))
+
+instance FlowTyped Text where
+  isPrim  _ = True
+  flowType _ _ = ("String", Fix (Prim String))
+
+instance FlowTyped TL.Text where
+  isPrim  _ = True
+  flowType _ _ = ("String", Fix (Prim String))
+
+instance FlowTyped String where
+  isPrim  _ = True
+  flowType _ _ = ("String", Fix (Prim String))
+
+instance FlowTyped Void.Void where
+  isPrim  _ = True
+  flowType _ _ = ("Void", Fix (Prim Void))
 
 class GFlowTyped g where
   gflowType :: Options -> Proxy (g x) -> (Text, FlowType)
