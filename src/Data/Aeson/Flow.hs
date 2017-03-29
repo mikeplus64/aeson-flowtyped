@@ -77,6 +77,7 @@ data FlowTypeF a
   | Nullable a
   | Literal !A.Value
   | Tag !Text
+  | Name !Text
   | Poly !Var !(Vector a)
   | PolyVar !Var
   deriving (Show, Eq, Functor, Traversable, Foldable, Generic)
@@ -209,10 +210,31 @@ instance (KnownSymbol conName, GFlowVal r) =>
       next@(Fix n) = gflowVal opt (Proxy :: Proxy (r x))
       tagName = gconstrName opt p
 
+instance GFlowVal f =>
+         GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
+  gflowVal opt p = gflowVal opt (fmap unM1 p)
+
+instance FlowTyped r => GFlowVal (Rec0 r) where
+  gflowVal opt p = case flowType opt (fmap unK1 p) of
+    (name, ty)
+      | not (isPrim p') -> Fix (Name name)
+      | otherwise       -> ty
+    where p' = fmap unK1 p
+
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
-  gflowVal opt _ = Fix $ Alt
-    (gflowVal opt (Proxy :: Proxy (a x)))
-    (gflowVal opt (Proxy :: Proxy (b x)))
+  gflowVal opt _ = Fix (Alt
+                        (gflowVal opt (Proxy :: Proxy (a x)))
+                        (gflowVal opt (Proxy :: Proxy (b x))))
+
+instance (GFlowVal a, GFlowVal b) => GFlowVal (a :*: b) where
+  gflowVal opt _ =
+    case gflowVal opt (Proxy :: Proxy (a x)) of
+      Fix (Tuple a) -> case gflowVal opt (Proxy :: Proxy (b x)) of
+        Fix (Tuple b) -> Fix (Tuple (a V.++ b))
+        b -> Fix (Tuple (V.snoc a b))
+      a -> case gflowVal opt (Proxy :: Proxy (b x)) of
+        Fix (Tuple b) -> Fix (Tuple (V.cons a b))
+        b -> Fix (Tuple [a, b])
 
 instance GFlowVal U1 where
   gflowVal _ _ = Fix (Prim Void)
@@ -226,7 +248,14 @@ instance (KnownSymbol fieldName, GFlowVal ty) =>
     (gfieldName opt p)
     (gflowVal opt (Proxy :: Proxy (ty x)))
 
-data A = A | B | C
+instance (GFlowRecord f, GFlowRecord g) =>
+         GFlowRecord (f :*: g) where
+  gflowRecordFields opt _ =
+    let
+      fx = gflowRecordFields opt (Proxy :: Proxy (f x))
+      gx = gflowRecordFields opt (Proxy :: Proxy (g x))
+    in
+      H.union fx gx
   deriving (Generic, FlowTyped, A.ToJSON)
 
 thing () = flowType defaultOptions (Proxy :: Proxy A)
