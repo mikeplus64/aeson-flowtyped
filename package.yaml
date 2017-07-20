@@ -3,6 +3,7 @@ license: BSD3
 license-file: LICENSE
 author: Mike Ledger <mike@quasimal.com>
 category: Web
+version: 0.0.1
 dependencies:
 - base >= 4.9
 - vector

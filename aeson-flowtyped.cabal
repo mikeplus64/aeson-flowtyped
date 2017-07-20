@@ -3,7 +3,7 @@
 -- see: https://github.com/sol/hpack
 
 name:           aeson-flowtyped
-version:        0.0.0
+version:        0.0.1
 category:       Web
 author:         Mike Ledger <mike@quasimal.com>
 license:        BSD3
