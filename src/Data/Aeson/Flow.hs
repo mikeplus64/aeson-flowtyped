@@ -1,49 +1,60 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DefaultSignatures     #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveFoldable        #-}
-{-# LANGUAGE DeriveFunctor         #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DeriveTraversable     #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE KindSignatures        #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedLists       #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE Rank2Types            #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeInType            #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE UndecidableInstances  #-}
-module Data.Aeson.Flow where
-import           Control.Lens.Plated
-import qualified Data.Aeson             as A
-import           Data.Aeson.Types       (Options (..), SumEncoding (..))
+{-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE DefaultSignatures         #-}
+{-# LANGUAGE DeriveAnyClass            #-}
+{-# LANGUAGE DeriveFoldable            #-}
+{-# LANGUAGE DeriveFunctor             #-}
+{-# LANGUAGE DeriveTraversable         #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE InstanceSigs              #-}
+{-# LANGUAGE MultiParamTypeClasses     #-}
+{-# LANGUAGE OverloadedLists           #-}
+{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE TypeInType                #-}
+{-# LANGUAGE TypeOperators             #-}
+{-# LANGUAGE UndecidableInstances      #-}
+module Data.Aeson.Flow
+  ( FlowTyped (..)
+  , FlowType
+  , FlowTypeF (..)
+  , PrimType (..)
+  , Fix (..)
+  , Var (..)
+  , exportFlowTypeAs
+  , showFlowType
+  , GFlowTyped
+  ) where
+import           Control.Applicative
+import qualified Data.Aeson              as A
+import           Data.Aeson.Types        (Options (..), SumEncoding (..))
 import           Data.Functor.Classes
 import           Data.Functor.Foldable
-import           Data.HashMap.Strict    (HashMap)
-import qualified Data.HashMap.Strict    as H
+import           Data.HashMap.Strict     (HashMap)
+import qualified Data.HashMap.Strict     as H
+import           Data.Maybe
 import           Data.Proxy
 import           Data.Reflection
-import qualified Data.Void as Void
-import qualified Text.PrettyPrint.Leijen as PP
-import           Data.Text              (Text)
-import qualified Data.Text              as T
-import qualified Data.Text.Lazy         as TL
-import           Data.Vector            (Vector)
-import qualified Data.Vector            as V
+import           Data.Text               (Text)
+import qualified Data.Text               as T
+import qualified Data.Text.Lazy          as TL
+import           Data.Vector             (Vector)
+import qualified Data.Vector             as V
+import qualified Data.Void               as Void
 import           GHC.Generics
 import           GHC.TypeLits
+import qualified Text.PrettyPrint.Leijen as PP
 
 --------------------------------------------------------------------------------
 -- Magical newtype for injecting showsPrec into any arbitrary Show
 
 inj :: Proxy s -> a -> Inj s a
 inj _ = Inj
+
 newtype Inj s a = Inj a
 -- needs UndecidableInstances
 instance Reifies s (Int -> a -> ShowS) => Show (Inj s a) where
@@ -60,6 +71,7 @@ data PrimType
   | Number
   | String
   | Void
+  | Mixed
   | Any
   deriving (Show, Read, Eq, Ord)
 
@@ -68,6 +80,7 @@ newtype Var = Var { varName :: Text }
 
 data FlowTypeF a
   = Object !(HashMap Text a)
+  | ExactObject !(HashMap Text a)
   | Map !(Vector (Text, a))
   | Array a
   | Tuple !(Vector a)
@@ -80,7 +93,8 @@ data FlowTypeF a
   | Name !Text
   | Poly !Var !(Vector a)
   | PolyVar !Var
-  deriving (Show, Eq, Functor, Traversable, Foldable, Generic)
+  deriving (Show, Eq, Functor, Traversable, Foldable)
+-- XXX: vector >= 0.12 has Eq1 vector which allows us to derive eq
 
 instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
@@ -88,21 +102,35 @@ instance Show1 FlowTypeF where
 
 type FlowType = Fix FlowTypeF
 
-instance Plated FlowType where
-  plate f (Fix a) = Fix <$> traverse f a
-
 text :: Text -> PP.Doc
 text = PP.text . T.unpack
 
 ppAlts :: [FlowType] -> FlowType -> PP.Doc
 ppAlts alts (Fix f) = case f of
   Alt a b -> ppAlts (a:alts) b
-  x       -> PP.encloseSep PP.empty PP.empty
-             (PP.string "| ")
-             (map pp (reverse (Fix x:alts)))
+  x       -> PP.align
+             (sep
+              (map pp
+               (reverse (Fix x:alts))))
+  where
+    sep [x]    = x
+    sep (x:xs) = x PP.<+> PP.string "|" PP.<//> sep xs
+    sep _      = PP.empty
+
 
 braceList :: [PP.Doc] -> PP.Doc
-braceList = PP.encloseSep PP.lbrace PP.rbrace (PP.comma PP.<> PP.space)
+braceList =
+  (\s -> PP.lbrace PP.</> s PP.</> PP.rbrace)
+  . PP.align
+  . PP.cat
+  . PP.punctuate PP.comma
+
+braceBarList :: [PP.Doc] -> PP.Doc
+braceBarList =
+  (\s -> PP.text "{|" PP.</> s PP.</> PP.text "|}")
+  . PP.align
+  . PP.cat
+  . PP.punctuate PP.comma
 
 ppJson :: A.Value -> PP.Doc
 ppJson v = case v of
@@ -112,84 +140,182 @@ ppJson v = case v of
   A.Bool t -> if t then PP.string "true" else PP.string "false"
   A.Null -> PP.string "null"
   A.Object obj ->
-    braceList
+    braceBarList
     (map
-     (\(name, fty) -> text name PP.<+> PP.colon PP.<+> ppJson fty)
+     (\(name, fty) ->
+        PP.space PP.<> text name PP.<+> PP.colon PP.<+> ppJson fty PP.<> PP.space)
      (H.toList obj))
+
+mayWrap :: FlowType -> PP.Doc -> PP.Doc
+mayWrap (Fix f) x = case f of
+  Nullable _ -> PP.parens x
+  Alt _ _    -> PP.parens x
+  _          -> x
 
 pp :: FlowType -> PP.Doc
 pp (Fix ft) = case ft of
   Object hm -> braceList
     (map
-     (\(name, fty) -> text name PP.<> PP.colon PP.<+> pp fty)
+     (\(name, fty) ->
+        text name PP.<>
+        PP.colon PP.<+>
+        pp fty)
      (H.toList hm))
-  Array a -> PP.string "Array" PP.<> PP.angles (pp a)
+  ExactObject hm -> braceBarList
+    (map
+     (\(name, fty) ->
+        text name PP.<>
+        PP.colon PP.<+>
+        pp fty)
+     (H.toList hm))
+  Array a -> mayWrap a (pp a) PP.<> PP.string "[]"
   Tuple t -> PP.list (map pp (V.toList t))
   Alt a b -> ppAlts [a] b
   Prim pt -> case pt of
     Boolean -> PP.text "boolean"
-    Number -> PP.text "number"
-    String -> PP.text "string"
-    Void -> PP.text "void"
-    Any -> PP.text "any"
+    Number  -> PP.text "number"
+    String  -> PP.text "string"
+    Void    -> PP.text "void"
+    Any     -> PP.text "any"
+    Mixed   -> PP.text "mixed"
   Nullable a -> PP.char '?' PP.<> pp a
   Literal a -> ppJson a
   Tag t -> PP.squotes (text t)
   Name t -> text t
-  _ -> PP.empty
+  _ -> PP.string (show ft)
+
+exportFlowTypeAs :: FlowTyped a => Options -> Maybe Text -> Proxy a -> Text
+exportFlowTypeAs opts name' p =
+  T.pack . show $
+  PP.string "export type " PP.<>
+  PP.string (T.unpack (fromMaybe
+                       (error "no name")
+                       (name <|> name'))) PP.<+> PP.string "=" PP.</>
+  PP.nest 2 (pp ft)
+  where
+    name = flowTypeName p
+    ft = flowType opts p
+
+showFlowType :: FlowType -> Text
+showFlowType = T.pack . show . pp
+
+flowTypePreferName :: FlowTyped a => Options -> Proxy a -> FlowType
+flowTypePreferName opts p = case flowTypeName p of
+  Just n -> Fix (Name n)
+  Nothing -> flowType opts p
 
 class FlowTyped a where
-  flowType :: Options -> Proxy a -> (Text, FlowType)
+  flowType :: Options -> Proxy a -> FlowType
+  flowTypeName :: Proxy a -> Maybe Text
 
   isPrim :: Proxy a -> Bool
   isPrim _ = False
 
-  default flowType :: (Generic a, GFlowTyped (Rep a))
-                   => Options
-                   -> Proxy a
-                   -> (Text, FlowType)
+  default flowType :: (Generic a, GFlowTyped (Rep a)) => Options -> Proxy a
+                   -> FlowType
   flowType opt p = gflowType opt (fmap from p)
+
+  default flowTypeName
+    :: (Rep a ~ D1 ('MetaData name mod pkg t) c, KnownSymbol name)
+    => Proxy a -> Maybe Text
+  flowTypeName p = Just (T.pack (symbolVal (gGetName p)))
+    where
+      gGetName :: Rep a ~ D1 ('MetaData name mod pkg t) c => Proxy a -> Proxy name
+      gGetName _ = Proxy
+
+instance FlowTyped a => FlowTyped [a] where
+  flowType opts _ = Fix (Array (flowTypePreferName opts (Proxy :: Proxy a)))
+  isPrim _ = True
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (Vector a) where
+  flowType opts _ = Fix (Array (flowTypePreferName opts (Proxy :: Proxy a)))
+  isPrim _ = True
+  flowTypeName _ = Nothing
+
+instance (FlowTyped a, FlowTyped b) => FlowTyped (a, b) where
+  flowTypeName _ = Nothing
+  flowType opts _ =
+    Fix (Tuple (V.fromList [aFt, bFt]))
+    where
+      aFt = flowTypePreferName opts (Proxy :: Proxy a)
+      bFt = flowTypePreferName opts (Proxy :: Proxy b)
+
+instance FlowTyped a => FlowTyped (Maybe a) where
+  flowType opts _ = Fix (Nullable (flowTypePreferName opts (Proxy :: Proxy a)))
+  isPrim _ = True
+  flowTypeName _ = Nothing
+
+instance (FlowTyped a, FlowTyped b) => FlowTyped (Either a b) where
+  flowTypeName _ = Nothing
+  flowType opts _ = Fix
+    (Alt
+     (Fix (ExactObject (H.fromList [("Left", aFt)])))
+     (Fix (ExactObject (H.fromList [("Right", bFt)]))))
+    where
+      aFt = flowTypePreferName opts (Proxy :: Proxy a)
+      bFt = flowTypePreferName opts (Proxy :: Proxy b)
+
+instance ( FlowTyped a
+         , FlowTyped b
+         , FlowTyped c
+         ) => FlowTyped (a, b, c) where
+  flowTypeName _ = Nothing
+  flowType opts _ = Fix (Tuple (V.fromList [aFt, bFt, cFt]))
+    where
+      aFt = flowTypePreferName opts (Proxy :: Proxy a)
+      bFt = flowTypePreferName opts (Proxy :: Proxy b)
+      cFt = flowTypePreferName opts (Proxy :: Proxy c)
 
 instance FlowTyped Int where
   isPrim  _ = True
-  flowType _ _ = ("Int", Fix (Prim Number))
+  flowType _ _ = Fix (Prim Number)
+  flowTypeName _ = Nothing
 
 instance FlowTyped Float where
   isPrim  _ = True
-  flowType _ _ = ("Float", Fix (Prim Number))
+  flowType _ _ = Fix (Prim Number)
+  flowTypeName _ = Nothing
 
 instance FlowTyped Double where
   isPrim  _ = True
-  flowType _ _ = ("Double", Fix (Prim Number))
+  flowType _ _ = Fix (Prim Number)
+  flowTypeName _ = Nothing
 
 instance FlowTyped Text where
   isPrim  _ = True
-  flowType _ _ = ("String", Fix (Prim String))
+  flowType _ _ = Fix (Prim String)
+  flowTypeName _ = Nothing
 
 instance FlowTyped TL.Text where
   isPrim  _ = True
-  flowType _ _ = ("String", Fix (Prim String))
+  flowType _ _ = Fix (Prim String)
+  flowTypeName _ = Nothing
 
-instance FlowTyped String where
+instance {-# OVERLAPS #-} FlowTyped String where
   isPrim  _ = True
-  flowType _ _ = ("String", Fix (Prim String))
+  flowType _ _ = Fix (Prim String)
+  flowTypeName _ = Nothing
 
 instance FlowTyped Void.Void where
   isPrim  _ = True
-  flowType _ _ = ("Void", Fix (Prim Void))
+  flowType _ _ = Fix (Prim Void)
+  flowTypeName _ = Nothing
+
+instance FlowTyped A.Value where
+  isPrim  _ = True
+  flowType _ _ = Fix (Prim Mixed)
+  flowTypeName _ = Nothing
 
 class GFlowTyped g where
-  gflowType :: Options -> Proxy (g x) -> (Text, FlowType)
+  gflowType :: Options -> Proxy (g x) -> FlowType
 
 class GFlowVal g where
   gflowVal :: Options -> Proxy (g x) -> FlowType
 
 instance (KnownSymbol name, GFlowVal c) =>
          GFlowTyped (D1 ('MetaData name mod pkg t) c) where
-  gflowType opt _ =
-    ( T.pack (symbolVal (Proxy :: Proxy name))
-    , gflowVal opt (Proxy :: Proxy (c x))
-    )
+  gflowType opt _ = gflowVal opt (Proxy :: Proxy (c x))
 
 gconstrName :: forall conName fx isRecord r x.
                KnownSymbol conName
@@ -210,11 +336,11 @@ gfieldName opt _ =
 instance (KnownSymbol conName, GFlowRecord r) =>
          GFlowVal (C1 ('MetaCons conName fx 'True) r) where
   gflowVal opt p = Fix $ case sumEncoding opt of
-    TaggedObject tfn _ -> Object $!
+    TaggedObject tfn _ -> ExactObject $!
       H.insert (T.pack tfn) (Fix (Tag tagName))
       next
     UntaggedValue -> Object next
-    ObjectWithSingleField -> Object [(tagName, Fix (Object next))]
+    ObjectWithSingleField -> ExactObject [(tagName, Fix (Object next))]
     TwoElemArray -> Tuple [Fix (Tag tagName), Fix (Object next)]
     where
       next = gflowRecordFields opt (fmap unM1 p)
@@ -223,27 +349,25 @@ instance (KnownSymbol conName, GFlowRecord r) =>
 instance (KnownSymbol conName, GFlowVal r) =>
          GFlowVal (C1 ('MetaCons conName fx 'False) r) where
   gflowVal opt p = Fix $ case sumEncoding opt of
-    TaggedObject tfn cfn ->
-      Object
+    TaggedObject tfn cfn -> ExactObject
       [ (T.pack tfn, Fix (Tag tagName))
       , (T.pack cfn, next)
       ]
     UntaggedValue -> n
-    ObjectWithSingleField -> Object [(tagName, next)]
+    ObjectWithSingleField -> ExactObject [(tagName, next)]
     TwoElemArray -> Tuple [Fix (Tag tagName), next]
     where
       next@(Fix n) = gflowVal opt (fmap unM1 p)
       tagName = gconstrName opt p
 
-instance GFlowVal f =>
-         GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
+instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
   gflowVal opt p = gflowVal opt (fmap unM1 p)
 
 instance FlowTyped r => GFlowVal (Rec0 r) where
-  gflowVal opt p = case flowType opt (fmap unK1 p) of
-    (name, ty)
-      | not (isPrim p') -> Fix (Name name)
-      | otherwise       -> ty
+  gflowVal opt p = case flowTypePreferName opt (fmap unK1 p) of
+    ty
+      | not (isPrim p'), Just name <- flowTypeName p' -> Fix (Name name)
+      | otherwise -> ty
     where p' = fmap unK1 p
 
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
@@ -256,10 +380,10 @@ instance (GFlowVal a, GFlowVal b) => GFlowVal (a :*: b) where
     case gflowVal opt (Proxy :: Proxy (a x)) of
       Fix (Tuple a) -> case gflowVal opt (Proxy :: Proxy (b x)) of
         Fix (Tuple b) -> Fix (Tuple (a V.++ b))
-        b -> Fix (Tuple (V.snoc a b))
+        b             -> Fix (Tuple (V.snoc a b))
       a -> case gflowVal opt (Proxy :: Proxy (b x)) of
         Fix (Tuple b) -> Fix (Tuple (V.cons a b))
-        b -> Fix (Tuple [a, b])
+        b             -> Fix (Tuple [a, b])
 
 instance GFlowVal U1 where
   gflowVal _ _ = Fix (Prim Void)
