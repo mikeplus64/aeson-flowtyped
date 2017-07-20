@@ -44,6 +44,8 @@ import qualified Data.Text               as T
 import qualified Data.Text.Lazy          as TL
 import           Data.Vector             (Vector)
 import qualified Data.Vector             as V
+import qualified Data.Vector.Storable    as VS
+import qualified Data.Vector.Unboxed     as VU
 import qualified Data.Void               as Void
 import           GHC.Generics
 import           GHC.TypeLits
@@ -201,7 +203,7 @@ showFlowType = T.pack . show . pp
 
 flowTypePreferName :: FlowTyped a => Options -> Proxy a -> FlowType
 flowTypePreferName opts p = case flowTypeName p of
-  Just n -> Fix (Name n)
+  Just n  -> Fix (Name n)
   Nothing -> flowType opts p
 
 class FlowTyped a where
@@ -229,6 +231,16 @@ instance FlowTyped a => FlowTyped [a] where
   flowTypeName _ = Nothing
 
 instance FlowTyped a => FlowTyped (Vector a) where
+  flowType opts _ = Fix (Array (flowTypePreferName opts (Proxy :: Proxy a)))
+  isPrim _ = True
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (VU.Vector a) where
+  flowType opts _ = Fix (Array (flowTypePreferName opts (Proxy :: Proxy a)))
+  isPrim _ = True
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (VS.Vector a) where
   flowType opts _ = Fix (Array (flowTypePreferName opts (Proxy :: Proxy a)))
   isPrim _ = True
   flowTypeName _ = Nothing
