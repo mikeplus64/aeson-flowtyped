@@ -30,6 +30,7 @@ module Data.Aeson.Flow
   , showFlowType
   , dependencies
   , GFlowTyped
+  , deriveFlow
   ) where
 import           Control.Applicative
 import qualified Data.Aeson              as A
@@ -230,6 +231,9 @@ dependencies r = Set.toList (cata (\ft -> case ft of
   _                        -> fold ft) (flowType A.defaultOptions r))
   where
     mfn = FlowName r <$> flowTypeName r
+
+deriveFlow :: (Generic a, GFlowTyped (Rep a)) => Options -> Proxy a -> FlowType
+deriveFlow opt p = gflowType opt (fmap from p)
 
 class Typeable a => FlowTyped a where
   flowType :: Options -> Proxy a -> FlowType
