@@ -339,6 +339,16 @@ instance FlowTyped Void.Void where
   flowType _ _ = Fix (Prim Void)
   flowTypeName _ = Nothing
 
+instance FlowTyped Char where
+  isPrim  _ = True
+  flowType _ _ = Fix (Prim String)
+  flowTypeName _ = Nothing
+
+instance FlowTyped Bool where
+  isPrim  _ = True
+  flowType _ _ = Fix (Prim Boolean)
+  flowTypeName _ = Nothing
+
 instance FlowTyped A.Value where
   isPrim  _ = True
   flowType _ _ = Fix (Prim Mixed)
