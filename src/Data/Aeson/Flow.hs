@@ -21,27 +21,32 @@
 module Data.Aeson.Flow
   ( FlowTyped (..)
   , FlowType
+  , FlowName (..)
   , FlowTypeF (..)
   , PrimType (..)
   , Fix (..)
   , Var (..)
   , exportFlowTypeAs
   , showFlowType
+  , dependencies
   , GFlowTyped
   ) where
 import           Control.Applicative
 import qualified Data.Aeson              as A
 import           Data.Aeson.Types        (Options (..), SumEncoding (..))
+import           Data.Foldable
 import           Data.Functor.Classes
-import           Data.Functor.Foldable
+import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
 import           Data.Maybe
 import           Data.Proxy
 import           Data.Reflection
+import qualified Data.Set                as Set
 import           Data.Text               (Text)
 import qualified Data.Text               as T
 import qualified Data.Text.Lazy          as TL
+import           Data.Typeable
 import           Data.Vector             (Vector)
 import qualified Data.Vector             as V
 import qualified Data.Vector.Storable    as VS
@@ -80,6 +85,18 @@ data PrimType
 newtype Var = Var { varName :: Text }
   deriving (Show, Read, Eq, Ord)
 
+data FlowName where
+  FlowName :: (Typeable a, FlowTyped a) => Proxy a -> Text -> FlowName
+
+instance Show FlowName where
+  show (FlowName _ t) = show t
+
+instance Eq FlowName where
+  FlowName pa _ == FlowName pb _ = typeOf pa == typeOf pb
+
+instance Ord FlowName where
+  FlowName pa _ `compare` FlowName pb _ = compare (typeOf pa) (typeOf pb)
+
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
@@ -92,7 +109,7 @@ data FlowTypeF a
   | Nullable a
   | Literal !A.Value
   | Tag !Text
-  | Name !Text
+  | Name !FlowName
   | Poly !Var !(Vector a)
   | PolyVar !Var
   deriving (Show, Eq, Functor, Traversable, Foldable)
@@ -183,7 +200,7 @@ pp (Fix ft) = case ft of
   Nullable a -> PP.char '?' PP.<> pp a
   Literal a -> ppJson a
   Tag t -> PP.squotes (text t)
-  Name t -> text t
+  Name (FlowName _ t) -> text t
   _ -> PP.string (show ft)
 
 exportFlowTypeAs :: FlowTyped a => Options -> Maybe Text -> Proxy a -> Text
@@ -201,12 +218,20 @@ exportFlowTypeAs opts name' p =
 showFlowType :: FlowType -> Text
 showFlowType = T.pack . show . pp
 
-flowTypePreferName :: FlowTyped a => Options -> Proxy a -> FlowType
+flowTypePreferName :: (Typeable a, FlowTyped a)
+                   => Options -> Proxy a -> FlowType
 flowTypePreferName opts p = case flowTypeName p of
-  Just n  -> Fix (Name n)
+  Just n  -> Fix (Name (FlowName p n))
   Nothing -> flowType opts p
 
-class FlowTyped a where
+dependencies :: FlowTyped a => Proxy a -> [FlowName]
+dependencies r = Set.toList (cata (\ft -> case ft of
+  Name fn | mfn /= Just fn -> Set.singleton fn
+  _                        -> fold ft) (flowType A.defaultOptions r))
+  where
+    mfn = FlowName r <$> flowTypeName r
+
+class Typeable a => FlowTyped a where
   flowType :: Options -> Proxy a -> FlowType
   flowTypeName :: Proxy a -> Maybe Text
 
@@ -378,9 +403,10 @@ instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
 instance FlowTyped r => GFlowVal (Rec0 r) where
   gflowVal opt p = case flowTypePreferName opt (fmap unK1 p) of
     ty
-      | not (isPrim p'), Just name <- flowTypeName p' -> Fix (Name name)
+      | not (isPrim p'), Just name <- flowTypeName p' -> Fix (Name (FlowName p' name))
       | otherwise -> ty
-    where p' = fmap unK1 p
+    where
+      p' = fmap unK1 p
 
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
   gflowVal opt _ = Fix (Alt
