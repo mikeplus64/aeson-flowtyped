@@ -135,7 +135,14 @@ instance Show1 FlowTypeF where
 type FlowType = Fix FlowTypeF
 
 data Info a = Constr !Text FlowTypeI a | NoInfo a
-  deriving (Functor, Traversable, Foldable)
+  deriving (Show, Functor, Traversable, Foldable)
+
+instance Show1 (Showy Info) where
+  liftShowsPrec _ _ i (Showy a) = showsPrec i a
+
+instance Show1 Info where
+  liftShowsPrec sp sl i a =
+    liftShowsPrec sp sl i (reify sp (\p -> Showy (fmap (inj p) a)))
 
 type FlowTypeI = Fix (Info `Compose` FlowTypeF)
 
@@ -282,7 +289,9 @@ instance (KnownSymbol name, GFlowVal c) =>
       checkNullary :: FlowTypeI -> FlowTypeI
       checkNullary i
         | allNullaryToStringTag opt, Just r <- go [] i, not (null r) =
-          foldr1 (\a b -> FC (NoInfo (Alt a b))) (map (FC . NoInfo . Tag) r)
+          foldr1
+          (\a b -> FC (NoInfo (Alt a b)))
+          (map (FC . NoInfo . Tag) r)
         | otherwise = i
         where
           isNullary :: FlowTypeI -> Bool
@@ -291,10 +300,23 @@ instance (KnownSymbol name, GFlowVal c) =>
 
           go :: [Text] -> FlowTypeI -> Maybe [Text]
           go alts (FC (Constr name h _)) = (name:alts) <$ guard (isNullary h)
-          go alts (FC (NoInfo (Alt (FC (Constr name h _)) b))) = do
-            guard (isNullary h)
-            go (name:alts) b
-          go _ _ = Nothing
+          go alts (FC (NoInfo (Alt a b))) =
+            case (a, b) of
+              (FC (Constr nameA ha _), FC (Constr nameB hb _)) ->
+                (nameA:nameB:alts) <$
+                guard (isNullary ha && isNullary hb)
+              (FC (Constr nameA ha _), b') -> do
+                guard (isNullary ha)
+                (nameA:) <$> go alts b'
+              (a', FC (Constr nameB hb _)) -> do
+                guard (isNullary hb)
+                (nameB:) <$> go alts a'
+              _ -> do
+                as <- go alts a
+                bs <- go [] b
+                return (as ++ bs)
+          go _ _ =
+            Nothing
 
       runFlowI :: FlowTypeI -> FlowType
       runFlowI = cata $ \(Compose i) -> case i of
@@ -380,13 +402,14 @@ instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
 
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :*: b) where
   gflowVal opt _ = noInfo $
-    case gflowVal opt (Proxy :: Proxy (a x)) of
-      Fix (Compose (Info (Tuple a))) -> case gflowVal opt (Proxy :: Proxy (b x)) of
-        Fix (Compose (Info (Tuple b))) -> Tuple (a V.++ b)
-        b                              -> Tuple (V.snoc a b)
-      a -> case gflowVal opt (Proxy :: Proxy (b x)) of
-        Fix (Compose (Info (Tuple b))) -> Tuple (V.cons a b)
-        b                              -> Tuple (V.fromList [a, b])
+    case (fA, fB) of
+      (Tuple tfA, Tuple tfB) -> Tuple (tfA V.++ tfB)
+      (Tuple tfA, _)         -> Tuple (V.snoc tfA b)
+      (_        , Tuple tfB) -> Tuple (V.cons a tfB)
+      _                      -> Tuple (V.fromList [a, b])
+    where
+      a@(Fix (Compose (Info fA))) = gflowVal opt (Proxy :: Proxy (a x))
+      b@(Fix (Compose (Info fB))) = gflowVal opt (Proxy :: Proxy (b x))
 
 instance GFlowVal U1 where
   gflowVal _ _ = noInfo (Prim Void)
