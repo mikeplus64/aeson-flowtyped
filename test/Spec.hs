@@ -26,7 +26,7 @@ data Recur = Recur
 
 instance FlowTyped Recur
 
-data Adt = Yeah | Nah | Couldbe Int
+data Adt = Yeah | Nah | Couldbe
   deriving (Generic)
 
 instance FlowTyped Adt
@@ -50,26 +50,25 @@ main = defaultMain $ testGroup "aeson-flowtyped"
     -- XXX: actually use Eq
 
   , testCase "User export" $
-    assertEqual
-    "User export type"
     "export type User =\n\
     \  {| extraInfo: mixed,\n\
     \     tag: 'User',\n\
     \     realname: ?string,\n\
     \     username: string,\n\
-    \     dob: ?[number,number,number] |};"
-    (exportFlowTypeAs defaultOptions
-     Nothing
-     (Proxy :: Proxy User))
+    \     dob: ?[number,number,number] |};" @=?
+    exportFlowTypeAs "User" (flowType defaultOptions (Proxy :: Proxy User))
 
   , testCase "Recursive type export" $
-    assertEqual
-    "Recursive type"
     "export type Recur =\n\
-    \  {| tag: 'Recur', stuff: User[], recurs: Recur[], asdf: number |};"
-    (exportFlowTypeAs defaultOptions
-     Nothing
-     (Proxy :: Proxy Recur))
+    \  {| tag: 'Recur', stuff: User[], recurs: Recur[], asdf: number |};" @=?
+    exportFlowTypeAs "Recur" (flowType defaultOptions (Proxy :: Proxy Recur))
+
+  , testCase "Nullary string tags" $
+    "export type Adt =\n\
+    \  'Couldbe' |\n\
+    \  'Nah' |\n\
+    \  'Yeah';" @=?
+    exportFlowTypeAs "Adt" (flowType defaultOptions (Proxy :: Proxy Adt))
 
 
   ]
