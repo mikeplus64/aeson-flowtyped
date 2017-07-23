@@ -231,10 +231,10 @@ flowTypePreferName opts p = case flowTypeName p of
   Just n  -> Fix (Name (FlowName p n))
   Nothing -> flowType opts p
 
-dependencies :: FlowTyped a => Proxy a -> [FlowName]
-dependencies r = Set.toList (cata (\ft -> case ft of
+dependencies :: FlowTyped a => Proxy a -> Set.Set FlowName
+dependencies r = cata (\ft -> case ft of
   Name fn | mfn /= Just fn -> Set.singleton fn
-  _       -> fold ft) (flowType A.defaultOptions r))
+  _       -> fold ft) (flowType A.defaultOptions r)
   where
     mfn = FlowName r <$> flowTypeName r
 
