@@ -360,7 +360,7 @@ instance FlowTyped A.Value where
   flowType _ _ = Fix (Prim Mixed)
   flowTypeName _ = Nothing
 
-instance FlowTyped UTCTiem where
+instance FlowTyped UTCTime where
   isPrim  _ = False
   flowType _ _ = Fix (Prim String)
   flowTypeName _ = Nothing
