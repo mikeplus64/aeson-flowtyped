@@ -232,11 +232,12 @@ flowTypePreferName opts p = case flowTypeName p of
   Nothing -> flowType opts p
 
 dependencies :: FlowTyped a => Proxy a -> Set.Set FlowName
-dependencies r = cata (\ft -> case ft of
-  Name fn | mfn /= Just fn -> Set.singleton fn
+dependencies r = mfn `Set.union` cata (\ft -> case ft of
+  Name fn -> Set.singleton fn
   _       -> fold ft) (flowType A.defaultOptions r)
   where
-    mfn = FlowName r <$> flowTypeName r
+    mfn :: Set.Set FlowName
+    mfn = foldMap Set.singleton (FlowName r <$> flowTypeName r)
 
 deriveFlow :: (Generic a, GFlowTyped (Rep a)) => Options -> Proxy a -> FlowType
 deriveFlow opt p = gflowType opt (fmap from p)
