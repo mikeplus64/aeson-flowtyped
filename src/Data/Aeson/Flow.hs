@@ -134,7 +134,7 @@ ppAlts alts (Fix f) = case f of
                (reverse (Fix x:alts))))
   where
     sep [x]    = x
-    sep (x:xs) = x PP.<+> PP.string "|" PP.<//> sep xs
+    sep (x:xs) = x PP.<+> PP.string "|" PP.<$> sep xs
     sep _      = PP.empty
 
 
@@ -142,14 +142,14 @@ braceList :: [PP.Doc] -> PP.Doc
 braceList =
   (\s -> PP.lbrace PP.</> s PP.</> PP.rbrace)
   . PP.align
-  . PP.cat
+  . PP.sep
   . PP.punctuate PP.comma
 
 braceBarList :: [PP.Doc] -> PP.Doc
 braceBarList =
   (\s -> PP.text "{|" PP.</> s PP.</> PP.text "|}")
   . PP.align
-  . PP.cat
+  . PP.sep
   . PP.punctuate PP.comma
 
 ppJson :: A.Value -> PP.Doc
@@ -206,13 +206,14 @@ pp (Fix ft) = case ft of
 
 exportFlowTypeAs :: FlowTyped a => Options -> Maybe Text -> Proxy a -> Text
 exportFlowTypeAs opts name' p =
-  T.pack . show $
+  T.pack . render $
   PP.string "export type " PP.<>
   PP.string (T.unpack (fromMaybe
                        (error "no name")
-                       (name <|> name'))) PP.<+> PP.string "=" PP.</>
-  PP.nest 2 (pp ft)
+                       (name <|> name'))) PP.<+> PP.string "=" PP.<$>
+  PP.indent 2 (pp ft) PP.<> PP.string ";"
   where
+    render = ($[]) . PP.displayS . PP.renderPretty 1.0 80
     name = flowTypeName p
     ft = flowType opts p
 
@@ -228,7 +229,7 @@ flowTypePreferName opts p = case flowTypeName p of
 dependencies :: FlowTyped a => Proxy a -> [FlowName]
 dependencies r = Set.toList (cata (\ft -> case ft of
   Name fn | mfn /= Just fn -> Set.singleton fn
-  _                        -> fold ft) (flowType A.defaultOptions r))
+  _       -> fold ft) (flowType A.defaultOptions r))
   where
     mfn = FlowName r <$> flowTypeName r
 

@@ -52,12 +52,12 @@ main = defaultMain $ testGroup "aeson-flowtyped"
   , testCase "User export" $
     assertEqual
     "User export type"
-    "export type User = {|\n\
-    \  extraInfo: mixed,\n\
-    \  tag: 'User',\n\
-    \  realname: ?string,\n\
-    \  username: string,\n\
-    \  dob: ?[number,number,number] |}"
+    "export type User =\n\
+    \  {| extraInfo: mixed,\n\
+    \     tag: 'User',\n\
+    \     realname: ?string,\n\
+    \     username: string,\n\
+    \     dob: ?[number,number,number] |};"
     (exportFlowTypeAs defaultOptions
      Nothing
      (Proxy :: Proxy User))
@@ -65,11 +65,8 @@ main = defaultMain $ testGroup "aeson-flowtyped"
   , testCase "Recursive type export" $
     assertEqual
     "Recursive type"
-    "export type Recur = {|\n\
-    \  tag: 'Recur',\n\
-    \  stuff: User[],\n\
-    \  recurs: Recur[],\n\
-    \  asdf: number |}"
+    "export type Recur =\n\
+    \  {| tag: 'Recur', stuff: User[], recurs: Recur[], asdf: number |};"
     (exportFlowTypeAs defaultOptions
      Nothing
      (Proxy :: Proxy Recur))
