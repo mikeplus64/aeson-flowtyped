@@ -10,10 +10,10 @@
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE InstanceSigs              #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
-{-# LANGUAGE OverloadedLists           #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TemplateHaskell           #-}
 {-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE TypeInType                #-}
 {-# LANGUAGE TypeOperators             #-}
@@ -35,14 +35,17 @@ module Data.Aeson.Flow
 import           Control.Applicative
 import qualified Data.Aeson              as A
 import           Data.Aeson.Types        (Options (..), SumEncoding (..))
+import           Data.Fixed              (Fixed)
 import           Data.Foldable
 import           Data.Functor.Classes
 import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
+import           Data.Int
 import           Data.Maybe
 import           Data.Proxy
 import           Data.Reflection
+import           Data.Scientific         (Scientific)
 import qualified Data.Set                as Set
 import           Data.Text               (Text)
 import qualified Data.Text               as T
@@ -54,6 +57,7 @@ import qualified Data.Vector             as V
 import qualified Data.Vector.Storable    as VS
 import qualified Data.Vector.Unboxed     as VU
 import qualified Data.Void               as Void
+import           Data.Word
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen as PP
@@ -256,6 +260,109 @@ class Typeable a => FlowTyped a where
       gGetName :: Rep a ~ D1 ('MetaData name mod pkg t) c => Proxy a -> Proxy name
       gGetName _ = Proxy
 
+class GFlowTyped g where
+  gflowType :: Options -> Proxy (g x) -> FlowType
+
+class GFlowVal g where
+  gflowVal :: Options -> Proxy (g x) -> FlowType
+
+instance (KnownSymbol name, GFlowVal c) =>
+         GFlowTyped (D1 ('MetaData name mod pkg t) c) where
+  gflowType opt _ = gflowVal opt (Proxy :: Proxy (c x))
+
+gconstrName :: forall conName fx isRecord r x.
+               KnownSymbol conName
+            => Options
+            -> Proxy (C1 ('MetaCons conName fx isRecord) r x)
+            -> Text
+gconstrName opt _ =
+  T.pack (constructorTagModifier opt (symbolVal (Proxy :: Proxy conName)))
+
+gfieldName :: forall name su ss ds r x.
+              KnownSymbol name
+           => Options
+           -> Proxy (S1 ('MetaSel ('Just name) su ss ds) r x)
+           -> Text
+gfieldName opt _ =
+  T.pack (fieldLabelModifier opt (symbolVal (Proxy :: Proxy name)))
+
+instance (KnownSymbol conName, GFlowRecord r) =>
+         GFlowVal (C1 ('MetaCons conName fx 'True) r) where
+  gflowVal opt p = Fix $ case sumEncoding opt of
+    TaggedObject tfn _ -> ExactObject $!
+      H.insert (T.pack tfn) (Fix (Tag tagName))
+      next
+    UntaggedValue -> Object next
+    ObjectWithSingleField -> ExactObject (H.fromList [(tagName, Fix (Object next))])
+    TwoElemArray -> Tuple (V.fromList [Fix (Tag tagName), Fix (Object next)])
+    where
+      next = gflowRecordFields opt (fmap unM1 p)
+      tagName = gconstrName opt p
+
+instance (KnownSymbol conName, GFlowVal r) =>
+         GFlowVal (C1 ('MetaCons conName fx 'False) r) where
+  gflowVal opt p = Fix $ case sumEncoding opt of
+    TaggedObject tfn cfn -> ExactObject (H.fromList
+      [ (T.pack tfn, Fix (Tag tagName))
+      , (T.pack cfn, next)
+      ])
+    UntaggedValue -> n
+    ObjectWithSingleField -> ExactObject (H.fromList [(tagName, next)])
+    TwoElemArray -> Tuple (V.fromList [Fix (Tag tagName), next])
+    where
+      next@(Fix n) = gflowVal opt (fmap unM1 p)
+      tagName = gconstrName opt p
+
+instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
+  gflowVal opt p = gflowVal opt (fmap unM1 p)
+
+instance FlowTyped r => GFlowVal (Rec0 r) where
+  gflowVal opt p = case flowTypePreferName opt (fmap unK1 p) of
+    ty
+      | not (isPrim p'), Just name <- flowTypeName p' -> Fix (Name (FlowName p' name))
+      | otherwise -> ty
+    where
+      p' = fmap unK1 p
+
+instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
+  gflowVal opt _ = Fix (Alt
+                        (gflowVal opt (Proxy :: Proxy (a x)))
+                        (gflowVal opt (Proxy :: Proxy (b x))))
+
+instance (GFlowVal a, GFlowVal b) => GFlowVal (a :*: b) where
+  gflowVal opt _ =
+    case gflowVal opt (Proxy :: Proxy (a x)) of
+      Fix (Tuple a) -> case gflowVal opt (Proxy :: Proxy (b x)) of
+        Fix (Tuple b) -> Fix (Tuple (a V.++ b))
+        b             -> Fix (Tuple (V.snoc a b))
+      a -> case gflowVal opt (Proxy :: Proxy (b x)) of
+        Fix (Tuple b) -> Fix (Tuple (V.cons a b))
+        b             -> Fix (Tuple (V.fromList [a, b]))
+
+instance GFlowVal U1 where
+  gflowVal _ _ = Fix (Prim Void)
+
+class GFlowRecord a where
+  gflowRecordFields :: Options -> Proxy (a x) -> HashMap Text FlowType
+
+instance (KnownSymbol fieldName, GFlowVal ty) =>
+         GFlowRecord (S1 ('MetaSel ('Just fieldName) su ss ds) ty) where
+  gflowRecordFields opt p = H.singleton
+    (gfieldName opt p)
+    (gflowVal opt (Proxy :: Proxy (ty x)))
+
+instance (GFlowRecord f, GFlowRecord g) =>
+         GFlowRecord (f :*: g) where
+  gflowRecordFields opt _ =
+    let
+      fx = gflowRecordFields opt (Proxy :: Proxy (f x))
+      gx = gflowRecordFields opt (Proxy :: Proxy (g x))
+    in
+      H.union fx gx
+
+--------------------------------------------------------------------------------
+-- Instances
+
 instance FlowTyped a => FlowTyped [a] where
   flowType opts _ = Fix (Array (flowTypePreferName opts (Proxy :: Proxy a)))
   isPrim _ = True
@@ -310,21 +417,6 @@ instance ( FlowTyped a
       bFt = flowTypePreferName opts (Proxy :: Proxy b)
       cFt = flowTypePreferName opts (Proxy :: Proxy c)
 
-instance FlowTyped Int where
-  isPrim  _ = True
-  flowType _ _ = Fix (Prim Number)
-  flowTypeName _ = Nothing
-
-instance FlowTyped Float where
-  isPrim  _ = True
-  flowType _ _ = Fix (Prim Number)
-  flowTypeName _ = Nothing
-
-instance FlowTyped Double where
-  isPrim  _ = True
-  flowType _ _ = Fix (Prim Number)
-  flowTypeName _ = Nothing
-
 instance FlowTyped Text where
   isPrim  _ = True
   flowType _ _ = Fix (Prim String)
@@ -365,159 +457,21 @@ instance FlowTyped UTCTime where
   flowType _ _ = Fix (Prim String)
   flowTypeName _ = Nothing
 
-class GFlowTyped g where
-  gflowType :: Options -> Proxy (g x) -> FlowType
+instance Typeable a => FlowTyped (Fixed a) where
+  isPrim  _ = False
+  flowType _ _ = Fix (Prim Number)
+  flowTypeName _ = Nothing
 
-class GFlowVal g where
-  gflowVal :: Options -> Proxy (g x) -> FlowType
-
-instance (KnownSymbol name, GFlowVal c) =>
-         GFlowTyped (D1 ('MetaData name mod pkg t) c) where
-  gflowType opt _ = gflowVal opt (Proxy :: Proxy (c x))
-
-gconstrName :: forall conName fx isRecord r x.
-               KnownSymbol conName
-            => Options
-            -> Proxy (C1 ('MetaCons conName fx isRecord) r x)
-            -> Text
-gconstrName opt _ =
-  T.pack (constructorTagModifier opt (symbolVal (Proxy :: Proxy conName)))
-
-gfieldName :: forall name su ss ds r x.
-              KnownSymbol name
-           => Options
-           -> Proxy (S1 ('MetaSel ('Just name) su ss ds) r x)
-           -> Text
-gfieldName opt _ =
-  T.pack (fieldLabelModifier opt (symbolVal (Proxy :: Proxy name)))
-
-instance (KnownSymbol conName, GFlowRecord r) =>
-         GFlowVal (C1 ('MetaCons conName fx 'True) r) where
-  gflowVal opt p = Fix $ case sumEncoding opt of
-    TaggedObject tfn _ -> ExactObject $!
-      H.insert (T.pack tfn) (Fix (Tag tagName))
-      next
-    UntaggedValue -> Object next
-    ObjectWithSingleField -> ExactObject [(tagName, Fix (Object next))]
-    TwoElemArray -> Tuple [Fix (Tag tagName), Fix (Object next)]
-    where
-      next = gflowRecordFields opt (fmap unM1 p)
-      tagName = gconstrName opt p
-
-instance (KnownSymbol conName, GFlowVal r) =>
-         GFlowVal (C1 ('MetaCons conName fx 'False) r) where
-  gflowVal opt p = Fix $ case sumEncoding opt of
-    TaggedObject tfn cfn -> ExactObject
-      [ (T.pack tfn, Fix (Tag tagName))
-      , (T.pack cfn, next)
-      ]
-    UntaggedValue -> n
-    ObjectWithSingleField -> ExactObject [(tagName, next)]
-    TwoElemArray -> Tuple [Fix (Tag tagName), next]
-    where
-      next@(Fix n) = gflowVal opt (fmap unM1 p)
-      tagName = gconstrName opt p
-
-instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
-  gflowVal opt p = gflowVal opt (fmap unM1 p)
-
-instance FlowTyped r => GFlowVal (Rec0 r) where
-  gflowVal opt p = case flowTypePreferName opt (fmap unK1 p) of
-    ty
-      | not (isPrim p'), Just name <- flowTypeName p' -> Fix (Name (FlowName p' name))
-      | otherwise -> ty
-    where
-      p' = fmap unK1 p
-
-instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
-  gflowVal opt _ = Fix (Alt
-                        (gflowVal opt (Proxy :: Proxy (a x)))
-                        (gflowVal opt (Proxy :: Proxy (b x))))
-
-instance (GFlowVal a, GFlowVal b) => GFlowVal (a :*: b) where
-  gflowVal opt _ =
-    case gflowVal opt (Proxy :: Proxy (a x)) of
-      Fix (Tuple a) -> case gflowVal opt (Proxy :: Proxy (b x)) of
-        Fix (Tuple b) -> Fix (Tuple (a V.++ b))
-        b             -> Fix (Tuple (V.snoc a b))
-      a -> case gflowVal opt (Proxy :: Proxy (b x)) of
-        Fix (Tuple b) -> Fix (Tuple (V.cons a b))
-        b             -> Fix (Tuple [a, b])
-
-instance GFlowVal U1 where
-  gflowVal _ _ = Fix (Prim Void)
-
-class GFlowRecord a where
-  gflowRecordFields :: Options -> Proxy (a x) -> HashMap Text FlowType
-
-instance (KnownSymbol fieldName, GFlowVal ty) =>
-         GFlowRecord (S1 ('MetaSel ('Just fieldName) su ss ds) ty) where
-  gflowRecordFields opt p = H.singleton
-    (gfieldName opt p)
-    (gflowVal opt (Proxy :: Proxy (ty x)))
-
-instance (GFlowRecord f, GFlowRecord g) =>
-         GFlowRecord (f :*: g) where
-  gflowRecordFields opt _ =
-    let
-      fx = gflowRecordFields opt (Proxy :: Proxy (f x))
-      gx = gflowRecordFields opt (Proxy :: Proxy (g x))
-    in
-      H.union fx gx
-
-{-
-data A0 = A1 | B1 | C1
-  deriving (Generic, FlowTyped, A.ToJSON)
-
-data A = A A0 String A0 | B { b :: Int, c :: Double } | C Int
-  deriving (Generic, FlowTyped, A.ToJSON)
-
-t = flowType defaultOptions (Proxy :: Proxy A)
-a = A.genericToJSON defaultOptions{ allNullaryToStringTag = True } (A A1 "a" A1)
-
-
-
->>> data A = A { asdf :: Either Int String } deriving (Generic)
->>> :t from (undefined :: A)
-from (undefined :: A)
-  :: D1
-       ('MetaData "A" "Ghci11" "interactive" 'False)
-       (C1
-          ('MetaCons "A" 'PrefixI 'True)
-          (S1
-             ('MetaSel
-                ('Just "asdf")
-                'NoSourceUnpackedness
-                'NoSourceStrictness
-                'DecidedLazy)
-             (Rec0 (Either Int String))))
-       x
-
->>> data T = T Int | U | V deriving (Generic, A.ToJSON)
->>> :t from (T 3)
-from (T 3)
-  :: D1
-       ('MetaData "T" "Ghci5" "interactive" 'False)
-       (C1
-          ('MetaCons "T" 'PrefixI 'False)
-          (S1
-             ('MetaSel
-                'Nothing 'NoSourceUnpackedness 'NoSourceStrictness 'DecidedLazy)
-             (Rec0 Int))
-        :+: (C1 ('MetaCons "U" 'PrefixI 'False) U1
-             :+: C1 ('MetaCons "V" 'PrefixI 'False) U1))
-       x
-
-
->>> data E = E | F | G deriving (Generic, A.ToJSON)
->>> :t from E
-from E
-  :: D1
-       ('MetaData "E" "Ghci9" "interactive" 'False)
-       (C1 ('MetaCons "E" 'PrefixI 'False) U1
-        :+: (C1 ('MetaCons "F" 'PrefixI 'False) U1
-             :+: C1 ('MetaCons "G" 'PrefixI 'False) U1))
-       x
-
--}
+-- monomorphic numeric instances
+$(concat <$> mapM
+  (\ty ->
+     [d|
+      instance FlowTyped $ty where
+        isPrim  _ = False
+        flowType _ _ = Fix (Prim Number)
+        flowTypeName _ = Nothing |])
+  [ [t|Int|], [t|Int8|], [t|Int16|], [t|Int32|], [t|Int64|]
+  , [t|Word|], [t|Word8|], [t|Word16|], [t|Word32|], [t|Word64|]
+  , [t|Float|], [t|Double|], [t|Scientific|]
+  ])
 

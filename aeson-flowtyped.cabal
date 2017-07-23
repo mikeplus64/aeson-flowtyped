@@ -3,7 +3,7 @@
 -- see: https://github.com/sol/hpack
 
 name:           aeson-flowtyped
-version:        0.2.0
+version:        0.3.0
 category:       Web
 author:         Mike Ledger <mike@quasimal.com>
 license:        BSD3
@@ -20,12 +20,14 @@ library
     , vector
     , text
     , aeson >= 0.8
+    , time
     , unordered-containers
     , containers
     , reflection
     , recursion-schemes
     , wl-pprint
     , free
+    , scientific
   exposed-modules:
       Data.Aeson.Flow
   other-modules:

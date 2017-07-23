@@ -3,7 +3,7 @@ license: BSD3
 license-file: LICENSE
 author: Mike Ledger <mike@quasimal.com>
 category: Web
-version: 0.2.0
+version: 0.3.0
 dependencies:
 - base >= 4.9
 - vector
@@ -20,6 +20,7 @@ library:
   - recursion-schemes
   - wl-pprint
   - free
+  - scientific
   ghc-options: -Wall -threaded -O2
 
 tests:
