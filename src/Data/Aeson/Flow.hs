@@ -47,6 +47,7 @@ import qualified Data.Set                as Set
 import           Data.Text               (Text)
 import qualified Data.Text               as T
 import qualified Data.Text.Lazy          as TL
+import           Data.Time               (UTCTime)
 import           Data.Typeable
 import           Data.Vector             (Vector)
 import qualified Data.Vector             as V
@@ -357,6 +358,11 @@ instance FlowTyped Bool where
 instance FlowTyped A.Value where
   isPrim  _ = True
   flowType _ _ = Fix (Prim Mixed)
+  flowTypeName _ = Nothing
+
+instance FlowTyped UTCTiem where
+  isPrim  _ = False
+  flowType _ _ = Fix (Prim String)
   flowTypeName _ = Nothing
 
 class GFlowTyped g where
