@@ -32,7 +32,6 @@ module Data.Aeson.Flow
   , GFlowTyped
   , deriveFlow
   ) where
-import           Control.Applicative
 import qualified Data.Aeson              as A
 import           Data.Aeson.Types        (Options (..), SumEncoding (..))
 import           Data.Fixed              (Fixed)
@@ -42,7 +41,6 @@ import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
 import           Data.Int
-import           Data.Maybe
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific         (Scientific)
@@ -209,18 +207,14 @@ pp (Fix ft) = case ft of
   Name (FlowName _ t) -> text t
   _ -> PP.string (show ft)
 
-exportFlowTypeAs :: FlowTyped a => Options -> Maybe Text -> Proxy a -> Text
-exportFlowTypeAs opts name' p =
+exportFlowTypeAs :: Text -> FlowType -> Text
+exportFlowTypeAs name ft =
   T.pack . render $
   PP.string "export type " PP.<>
-  PP.string (T.unpack (fromMaybe
-                       (error "no name")
-                       (name <|> name'))) PP.<+> PP.string "=" PP.<$>
+  PP.string (T.unpack name) PP.<+> PP.string "=" PP.<$>
   PP.indent 2 (pp ft) PP.<> PP.string ";"
   where
     render = ($[]) . PP.displayS . PP.renderPretty 1.0 80
-    name = flowTypeName p
-    ft = flowType opts p
 
 showFlowType :: FlowType -> Text
 showFlowType = T.pack . show . pp
