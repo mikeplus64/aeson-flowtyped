@@ -4,8 +4,11 @@
 
 name:           aeson-flowtyped
 version:        0.7.0
+synopsis:       Create Flow type definitions from Haskell data types.
+description:    Create Flow type definitions from Haskell data types.
 category:       Web
 author:         Mike Ledger <mike@quasimal.com>
+maintainer:     mike@quasimal.com
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
@@ -15,7 +18,7 @@ library
   hs-source-dirs:
       src
   build-depends:
-      base >= 4.9
+      base >= 4.9 && <4.11
     , aeson >= 0.8
     , vector
     , text
@@ -39,7 +42,7 @@ test-suite aeson-flowtyped
   hs-source-dirs:
       test
   build-depends:
-      base >= 4.9
+      base >= 4.9 && <4.11
     , aeson >= 0.8
     , vector
     , text
