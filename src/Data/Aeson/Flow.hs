@@ -19,25 +19,24 @@
 {-# LANGUAGE TypeInType                #-}
 {-# LANGUAGE TypeOperators             #-}
 {-# LANGUAGE UndecidableInstances      #-}
-{-# LANGUAGE ViewPatterns              #-}
+{-# LANGUAGE ViewPatterns              #-} -- phew
+-- | Derive <https://flow.org/ Flow types> using aeson 'Options'.
 module Data.Aeson.Flow
-  ( FlowTyped (..)
+  (
+    FlowTyped (..)
   , FlowType
-  , FlowName (..)
   , FlowTypeF (..)
-  , PrimType (..)
-  , Fix (..)
-  , Var (..)
-  , Info (..)
-  , Compose (..)
-  , pattern Info
-  , noInfo
-  , discardInfo
+  , dependencies
   , exportFlowTypeAs
   , showFlowType
-  , dependencies
-  , GFlowTyped
   , deriveFlow
+    -- * Internals
+  , FlowName (..)
+  , PrimType (..)
+  , GFlowTyped
+  , FlowTypeI
+  , Info (..)
+  , Var (..)
   ) where
 import           Control.Monad
 import qualified Data.Aeson              as A
@@ -110,6 +109,7 @@ instance Eq FlowName where
 instance Ord FlowName where
   FlowName pa _ `compare` FlowName pb _ = compare (typeOf pa) (typeOf pb)
 
+-- | The main AST for flowtypes.
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
@@ -132,8 +132,6 @@ instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
     liftShowsPrec sp sl i (reify sp (\p -> Showy (fmap (inj p) a)))
 
-type FlowType = Fix FlowTypeF
-
 data Info a = Constr !Text FlowTypeI a | NoInfo a
   deriving (Show, Functor, Traversable, Foldable)
 
@@ -145,6 +143,8 @@ instance Show1 Info where
     liftShowsPrec sp sl i (reify sp (\p -> Showy (fmap (inj p) a)))
 
 type FlowTypeI = Fix (Info `Compose` FlowTypeF)
+
+type FlowType = Fix FlowTypeF
 
 text :: Text -> PP.Doc
 text = PP.text . T.unpack
@@ -228,6 +228,7 @@ pp (Fix ft) = case ft of
   Name (FlowName _ t) -> text t
   _ -> PP.string (show ft)
 
+-- | Generate a @ export type @ declaration.
 exportFlowTypeAs :: Text -> FlowType -> Text
 exportFlowTypeAs name ft =
   T.pack . render $
@@ -237,6 +238,7 @@ exportFlowTypeAs name ft =
   where
     render = ($[]) . PP.displayS . PP.renderPretty 1.0 80
 
+-- | Pretty-print a flowtype in flowtype syntax
 showFlowType :: FlowType -> Text
 showFlowType = T.pack . show . pp
 
