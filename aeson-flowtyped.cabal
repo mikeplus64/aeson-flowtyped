@@ -7,12 +7,18 @@ version:        0.7.0
 synopsis:       Create Flow type definitions from Haskell data types.
 description:    Create Flow type definitions from Haskell data types.
 category:       Web
+homepage:       https://github.com/mikeplus64/aeson-flowtyped#readme
+bug-reports:    https://github.com/mikeplus64/aeson-flowtyped/issues
 author:         Mike Ledger <mike@quasimal.com>
 maintainer:     mike@quasimal.com
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
 cabal-version:  >= 1.10
+
+source-repository head
+  type: git
+  location: https://github.com/mikeplus64/aeson-flowtyped
 
 library
   hs-source-dirs:

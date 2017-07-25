@@ -33,3 +33,5 @@ tests:
     - aeson-flowtyped
     - tasty
     - tasty-hunit
+
+github: mikeplus64/aeson-flowtyped
