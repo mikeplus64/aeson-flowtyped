@@ -4,10 +4,11 @@ synopsis: Create Flow type definitions from Haskell data types.
 description: Create Flow type definitions from Haskell data types.
 license-file: LICENSE
 author: Mike Ledger <mike@quasimal.com>
+maintainer: mike@quasimal.com
 category: Web
 version: 0.7.1
 dependencies:
-- base >= 4.9
+- base >= 4.9 && <4.11
 - aeson >= 0.8
 - vector
 - text
