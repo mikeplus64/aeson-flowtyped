@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE DeriveAnyClass            #-}
@@ -59,7 +58,6 @@ import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
 import           Data.Int
-import           Data.Monoid             (Endo (..))
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific         (Scientific)
@@ -76,7 +74,6 @@ import qualified Data.Vector.Storable    as VS
 import qualified Data.Vector.Unboxed     as VU
 import qualified Data.Void               as Void
 import           Data.Word
-import           Debug.Trace
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen as PP
@@ -135,6 +132,7 @@ data FlowTypeF a
   | Alt a a
   | Prim !PrimType
   | Nullable a
+  | Omitable a
   | Literal !A.Value
   | Tag !Text
   | Name !FlowName
@@ -208,25 +206,22 @@ ppJson v = case v of
 mayWrap :: FlowType -> PP.Doc -> PP.Doc
 mayWrap (Fix f) x = case f of
   Nullable _ -> PP.parens x
+  Omitable _ -> PP.parens x
   Alt _ _    -> PP.parens x
   _          -> x
 
+ppObject :: HashMap Text FlowType -> [PP.Doc]
+ppObject = map
+  (\(name, fty') ->
+     case fty' of
+       Fix (Omitable fty) -> text name PP.<> PP.text "?" PP.<> PP.colon PP.<+> pp fty
+       fty -> text name PP.<> PP.colon PP.<+> pp fty)
+  . H.toList
+
 pp :: FlowType -> PP.Doc
 pp (Fix ft) = case ft of
-  Object hm -> braceList
-    (map
-     (\(name, fty) ->
-        text name PP.<>
-        PP.colon PP.<+>
-        pp fty)
-     (H.toList hm))
-  ExactObject hm -> braceBarList
-    (map
-     (\(name, fty) ->
-        text name PP.<>
-        PP.colon PP.<+>
-        pp fty)
-     (H.toList hm))
+  Object hm -> braceList (ppObject hm)
+  ExactObject hm -> braceBarList (ppObject hm)
   Array a -> mayWrap a (pp a) PP.<> PP.string "[]"
   Tuple t -> PP.list (map pp (V.toList t))
   Alt a b -> ppAlts [a] b
@@ -238,6 +233,7 @@ pp (Fix ft) = case ft of
     Any     -> PP.text "any"
     Mixed   -> PP.text "mixed"
   Nullable a -> PP.char '?' PP.<> pp a
+  Omitable a -> PP.char '?' PP.<> pp a -- hopefully these are caught
   Literal a -> ppJson a
   Tag t -> PP.squotes (text t)
   Name (FlowName _ t) -> text t
@@ -448,7 +444,18 @@ instance (KnownSymbol conName, GFlowRecord r) =>
     ObjectWithSingleField -> ExactObject (H.fromList [(tagName, noInfo (Object next))])
     TwoElemArray -> Tuple (V.fromList [noInfo (Tag tagName), noInfo (Object next)])
     where
-      next = H.map (cata noInfo) (gflowRecordFields opt (fmap unM1 p))
+      omitNothings =
+        if omitNothingFields opt
+        then H.map $ \(Fix t) -> Fix $ case t of
+          Nullable a -> Omitable a
+          _          -> t
+        else id
+
+      next =
+        H.map
+        (cata noInfo)
+        (omitNothings (gflowRecordFields opt (fmap unM1 p)))
+
       tagName = gconstrName opt p
 
 instance (KnownSymbol conName, GFlowVal r) =>

@@ -1,9 +1,11 @@
 name: aeson-flowtyped
 license: BSD3
+synopsis: Create Flow type definitions from Haskell data types.
+description: Create Flow type definitions from Haskell data types.
 license-file: LICENSE
 author: Mike Ledger <mike@quasimal.com>
 category: Web
-version: 0.7.0
+version: 0.7.1
 dependencies:
 - base >= 4.9
 - aeson >= 0.8
@@ -21,7 +23,6 @@ library:
   - wl-pprint
   - free
   - scientific
-
 tests:
   aeson-flowtyped:
     main: Spec.hs

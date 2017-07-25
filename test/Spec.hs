@@ -38,7 +38,7 @@ instance FlowTyped Adt4
 
 data Codep = Codep
   { corecurs :: [Recur]
-  , cousers :: [User]
+  , cousers  :: [User]
   } deriving (Generic)
 
 instance FlowTyped Codep
