@@ -3,7 +3,7 @@
 -- see: https://github.com/sol/hpack
 
 name:           aeson-flowtyped
-version:        0.6.2
+version:        0.7.0
 category:       Web
 author:         Mike Ledger <mike@quasimal.com>
 license:        BSD3
@@ -14,17 +14,16 @@ cabal-version:  >= 1.10
 library
   hs-source-dirs:
       src
-  ghc-options: -Wall -threaded -O2
   build-depends:
       base >= 4.9
+    , aeson >= 0.8
     , vector
     , text
-    , aeson >= 0.8
+    , recursion-schemes
     , time
     , unordered-containers
     , containers
     , reflection
-    , recursion-schemes
     , wl-pprint
     , free
     , scientific
@@ -41,9 +40,10 @@ test-suite aeson-flowtyped
       test
   build-depends:
       base >= 4.9
+    , aeson >= 0.8
     , vector
     , text
-    , aeson >= 0.8
+    , recursion-schemes
     , aeson-flowtyped
     , tasty
     , tasty-hunit
