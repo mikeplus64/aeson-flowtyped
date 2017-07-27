@@ -205,6 +205,7 @@ mayWrap (Fix f) x = case f of
   Nullable _ -> PP.parens x
   Omitable _ -> PP.parens x
   Alt _ _    -> PP.parens x
+  Array _    -> PP.parens x
   _          -> x
 
 ppObject :: HashMap Text FlowType -> [PP.Doc]
@@ -234,8 +235,8 @@ pp (Fix ft) = case ft of
     Void    -> PP.text "void"
     Any     -> PP.text "any"
     Mixed   -> PP.text "mixed"
-  Nullable a -> PP.char '?' PP.<> pp a
-  Omitable a -> PP.char '?' PP.<> pp a -- hopefully these are caught
+  Nullable a -> PP.char '?' PP.<> mayWrap a (pp a)
+  Omitable a -> PP.char '?' PP.<> mayWrap a (pp a) -- hopefully these are caught
   Literal a -> ppJson a
   Tag t -> PP.squotes (text t)
   Name (FlowName _ t) -> text t
