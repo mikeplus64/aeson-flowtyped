@@ -3,6 +3,8 @@
 import           Data.Aeson            (Value)
 import           Data.Aeson.Flow
 import           Data.Functor.Foldable (Fix (..))
+import           Data.HashMap.Strict   (HashMap)
+import qualified Data.HashMap.Strict   as H
 import           Data.Proxy            (Proxy (..))
 import           Data.Text             (Text)
 import           Data.Vector           (Vector)
@@ -38,10 +40,15 @@ instance FlowTyped Adt4
 
 data Codep = Codep
   { corecurs :: [Recur]
-  , cousers :: [User]
+  , cousers  :: [User]
   } deriving (Generic)
 
 instance FlowTyped Codep
+
+data Hmap = Hmap (HashMap Text User)
+  deriving (Generic)
+
+instance FlowTyped Hmap
 
 main :: IO ()
 main = defaultMain $ testGroup "aeson-flowtyped"
@@ -92,6 +99,11 @@ main = defaultMain $ testGroup "aeson-flowtyped"
     \  'C4' |\n\
     \  'D4';" @=?
     exportFlowTypeAs "Adt4" (flowType (Proxy :: Proxy Adt4))
+
+  , testCase "map-style object / hashmap instance" $
+    "export type Hmap =\n\
+    \  { [key: string]: User };" @=?
+    exportFlowTypeAs "Hmap" (flowType (Proxy :: Proxy (HashMap Text User)))
 
   , testCase "module export" $
     "// @flow\n\

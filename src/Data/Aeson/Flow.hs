@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE DeriveAnyClass            #-}
@@ -59,7 +58,6 @@ import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
 import           Data.Int
-import           Data.Monoid             (Endo (..))
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific         (Scientific)
@@ -76,7 +74,6 @@ import qualified Data.Vector.Storable    as VS
 import qualified Data.Vector.Unboxed     as VU
 import qualified Data.Void               as Void
 import           Data.Word
-import           Debug.Trace
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen as PP
@@ -128,7 +125,7 @@ instance Ord FlowName where
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
-  | Map !(Vector (Text, a))
+  | ObjectMap !Text a
   | Array a
   | Tuple !(Vector a)
   | Fun !(Vector (Text, a)) a
@@ -141,7 +138,8 @@ data FlowTypeF a
   | Poly !Var !(Vector a)
   | PolyVar !Var
   deriving (Show, Eq, Functor, Traversable, Foldable)
--- XXX: vector >= 0.12 has Eq1 vector which allows us to derive eq
+-- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix FlowTypeF
+-- and related types
 
 instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
@@ -167,15 +165,11 @@ text = PP.text . T.unpack
 ppAlts :: [FlowType] -> FlowType -> PP.Doc
 ppAlts alts (Fix f) = case f of
   Alt a b -> ppAlts (a:alts) b
-  x       -> PP.align
-             (sep
-              (map pp
-               (reverse (Fix x:alts))))
+  x       -> PP.align (sep (map pp (reverse (Fix x:alts))))
   where
     sep [x]    = x
     sep (x:xs) = x PP.<+> PP.string "|" PP.<$> sep xs
     sep _      = PP.empty
-
 
 braceList :: [PP.Doc] -> PP.Doc
 braceList =
@@ -227,6 +221,11 @@ pp (Fix ft) = case ft of
         PP.colon PP.<+>
         pp fty)
      (H.toList hm))
+  ObjectMap keyName a -> braceList
+    [ PP.brackets (text keyName PP.<> PP.text ": string") PP.<>
+      PP.colon PP.<+>
+      pp a
+    ]
   Array a -> mayWrap a (pp a) PP.<> PP.string "[]"
   Tuple t -> PP.list (map pp (V.toList t))
   Alt a b -> ppAlts [a] b
@@ -617,6 +616,12 @@ instance FlowTyped UTCTime where
 instance Typeable a => FlowTyped (Fixed a) where
   isPrim  _ = False
   flowType _ = Fix (Prim Number)
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (HashMap Text a) where
+  -- XXX this is getting quite incoherent, what makes something "Prim" or not...
+  isPrim _ = True
+  flowType _ = Fix (ObjectMap "key" (flowTypePreferName (Proxy :: Proxy a)))
   flowTypeName _ = Nothing
 
 -- monomorphic numeric instances

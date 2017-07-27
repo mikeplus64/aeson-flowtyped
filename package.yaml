@@ -6,7 +6,7 @@ maintainer: mike@quasimal.com
 description: Create Flow type definitions from Haskell data types.
 synopsis: Create Flow type definitions from Haskell data types.
 category: Web
-version: 0.7.0
+version: 0.7.2
 dependencies:
 - base >= 4.9 && <4.11
 - aeson >= 0.8
@@ -33,5 +33,6 @@ tests:
     - aeson-flowtyped
     - tasty
     - tasty-hunit
+    - unordered-containers
 
 github: mikeplus64/aeson-flowtyped

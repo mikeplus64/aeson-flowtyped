@@ -56,4 +56,5 @@ test-suite aeson-flowtyped
     , aeson-flowtyped
     , tasty
     , tasty-hunit
+    , unordered-containers
   default-language: Haskell2010
