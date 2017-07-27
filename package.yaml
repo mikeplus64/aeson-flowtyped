@@ -8,7 +8,7 @@ maintainer: mike@quasimal.com
 description: Create Flow type definitions from Haskell data types.
 synopsis: Create Flow type definitions from Haskell data types.
 category: Web
-version: 0.7.2
+version: 0.7.3
 dependencies:
 - base >= 4.9 && <4.11
 - aeson >= 0.8

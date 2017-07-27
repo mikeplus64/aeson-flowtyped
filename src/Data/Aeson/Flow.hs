@@ -25,6 +25,7 @@ module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
   , FlowType
+  , Fix (..)
   , FlowTypeF (..)
     -- * Code generation
     -- ** Wholesale ES6/flow modules
