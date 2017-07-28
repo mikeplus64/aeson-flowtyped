@@ -58,16 +58,20 @@ import           Data.Functor.Compose
 import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
+import qualified Data.HashSet            as HashSet
 import           Data.Int
+import qualified Data.IntSet             as IntSet
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific         (Scientific)
+import qualified Data.Set                as Set
 import qualified Data.Set                as Set
 import           Data.Text               (Text)
 import qualified Data.Text               as T
 import qualified Data.Text.IO            as TIO
 import qualified Data.Text.Lazy          as TL
 import           Data.Time               (UTCTime)
+import qualified Data.Tree               as Tree
 import           Data.Typeable
 import           Data.Vector             (Vector)
 import qualified Data.Vector             as V
@@ -630,11 +634,38 @@ instance Typeable a => FlowTyped (Fixed a) where
   flowType _ = Fix (Prim Number)
   flowTypeName _ = Nothing
 
+-- | This is at odds with "aeson" which defines 'A.ToJSONKey'
 instance FlowTyped a => FlowTyped (HashMap Text a) where
   -- XXX this is getting quite incoherent, what makes something "Prim" or not...
   isPrim _ = True
   flowType _ = Fix (ObjectMap "key" (flowTypePreferName (Proxy :: Proxy a)))
   flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (Set.Set a) where
+  isPrim _ = False
+  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowTypeName _ = Nothing
+
+instance FlowTyped IntSet.IntSet where
+  isPrim _ = False
+  flowType _ = Fix (Array (Fix (Prim Number)))
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (HashSet.HashSet a) where
+  isPrim _ = False
+  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowTypeName _ = Nothing
+
+-- | This instance is defined recursively. You'll probably need to use
+-- 'dependencies' to extract a usable definition
+instance FlowTyped a => FlowTyped (Tree.Tree a) where
+  isPrim _ = False
+  flowType _ = Fix (Tuple
+                    (V.fromList
+                     [ flowType (Proxy :: Proxy a)
+                     , Fix (Array (flowType (Proxy :: Proxy (Tree.Tree a))))
+                     ]))
+  flowTypeName _ = Just "Tree"
 
 -- monomorphic numeric instances
 $(concat <$> mapM
