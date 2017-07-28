@@ -667,6 +667,11 @@ instance FlowTyped a => FlowTyped (Tree.Tree a) where
                      ]))
   flowTypeName _ = Just "Tree"
 
+instance FlowTyped () where
+  isPrim _ = False
+  flowType _ = Fix (Tuple V.empty)
+  flowTypeName _ = Nothing
+
 -- monomorphic numeric instances
 $(concat <$> mapM
   (\ty ->
