@@ -3,7 +3,7 @@
 -- see: https://github.com/sol/hpack
 
 name:           aeson-flowtyped
-version:        0.7.5
+version:        0.8.0
 synopsis:       Create Flow type definitions from Haskell data types.
 description:    Create Flow type definitions from Haskell data types.
 category:       Web

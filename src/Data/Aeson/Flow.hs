@@ -369,12 +369,11 @@ defaultFlowTypeName p = Just (T.pack (symbolVal (pGetName (fmap from p))))
 
 flowTypePreferName :: (Typeable a, FlowTyped a) => Proxy a -> FlowType
 flowTypePreferName p = case flowTypeName p of
-  Just n  ->
-    let vars = flowTypeVars p
-        name = Fix (Name (FlowName p n))
-    in if not (null vars)
-       then Fix (PolyApply name vars)
-       else name
+  Just n | null vars -> name
+         | otherwise -> Fix (PolyApply name vars)
+    where
+      vars = flowTypeVars p
+      name = Fix (Name (FlowName p n))
   Nothing -> flowType p
 
 class Typeable a => FlowTyped a where
@@ -527,12 +526,7 @@ instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
   gflowVal opt p = gflowVal opt (fmap unM1 p)
 
 instance FlowTyped r => GFlowVal (Rec0 r) where
-  gflowVal _opt p = case flowTypePreferName (fmap unK1 p) of
-    ty
-      | not (isPrim p'), Just name <- flowTypeName p' -> noInfo (Name (FlowName p' name))
-      | otherwise -> cata noInfo ty
-    where
-      p' = fmap unK1 p
+  gflowVal _opt p = cata noInfo (flowTypePreferName (fmap unK1 p))
 
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
   gflowVal opt _ = noInfo
