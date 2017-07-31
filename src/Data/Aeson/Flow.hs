@@ -47,41 +47,47 @@ module Data.Aeson.Flow
   , FlowTypeI
   , Info (..)
   , Var (..)
+  , Typeable
+  , typeRep
   ) where
 import           Control.Monad
-import qualified Data.Aeson              as A
-import           Data.Aeson.Types        (Options (..), SumEncoding (..))
-import           Data.Fixed              (Fixed)
+import           Control.Monad.Trans.State.Strict
+import qualified Data.Aeson                       as A
+import           Data.Aeson.Types                 (Options (..),
+                                                   SumEncoding (..))
+import           Data.Fixed                       (Fixed)
 import           Data.Foldable
 import           Data.Functor.Classes
 import           Data.Functor.Compose
-import           Data.Functor.Foldable   hiding (fold)
-import           Data.HashMap.Strict     (HashMap)
-import qualified Data.HashMap.Strict     as H
-import qualified Data.HashSet            as HashSet
+import           Data.Functor.Foldable            hiding (fold)
+import           Data.HashMap.Strict              (HashMap)
+import qualified Data.HashMap.Strict              as H
+import qualified Data.HashSet                     as HashSet
 import           Data.Int
-import qualified Data.IntSet             as IntSet
+import qualified Data.IntSet                      as IntSet
+import           Data.Kind                        (Type)
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as M
 import           Data.Proxy
 import           Data.Reflection
-import           Data.Scientific         (Scientific)
-import qualified Data.Set                as Set
-import qualified Data.Set                as Set
-import           Data.Text               (Text)
-import qualified Data.Text               as T
-import qualified Data.Text.IO            as TIO
-import qualified Data.Text.Lazy          as TL
-import           Data.Time               (UTCTime)
-import qualified Data.Tree               as Tree
+import           Data.Scientific                  (Scientific)
+import qualified Data.Set                         as Set
+import           Data.Text                        (Text)
+import qualified Data.Text                        as T
+import qualified Data.Text.IO                     as TIO
+import qualified Data.Text.Lazy                   as TL
+import           Data.Time                        (UTCTime)
+import qualified Data.Tree                        as Tree
 import           Data.Typeable
-import           Data.Vector             (Vector)
-import qualified Data.Vector             as V
-import qualified Data.Vector.Storable    as VS
-import qualified Data.Vector.Unboxed     as VU
-import qualified Data.Void               as Void
+import           Data.Vector                      (Vector)
+import qualified Data.Vector                      as V
+import qualified Data.Vector.Storable             as VS
+import qualified Data.Vector.Unboxed              as VU
+import qualified Data.Void                        as Void
 import           Data.Word
 import           GHC.Generics
 import           GHC.TypeLits
-import qualified Text.PrettyPrint.Leijen as PP
+import qualified Text.PrettyPrint.Leijen          as PP
 
 --------------------------------------------------------------------------------
 -- Magical newtype for injecting showsPrec into any arbitrary Show
@@ -108,9 +114,6 @@ data PrimType
   | Void
   | Mixed
   | Any
-  deriving (Show, Read, Eq, Ord)
-
-newtype Var = Var { varName :: Text }
   deriving (Show, Read, Eq, Ord)
 
 -- | A name for a flowtyped data-type. These are returned by 'dependencies'.
@@ -141,8 +144,9 @@ data FlowTypeF a
   | Literal !A.Value
   | Tag !Text
   | Name !FlowName
-  | Poly !Var !(Vector a)
-  | PolyVar !Var
+  | Instantiate !TypeRep a
+  | PolyVar !TypeRep
+  | PolyApply a ![TypeRep]
   deriving (Show, Eq, Functor, Traversable, Foldable)
 -- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix FlowTypeF
 -- and related types
@@ -168,10 +172,12 @@ type FlowType = Fix FlowTypeF
 text :: Text -> PP.Doc
 text = PP.text . T.unpack
 
-ppAlts :: [FlowType] -> FlowType -> PP.Doc
+type Poly = State (Map TypeRep Text)
+
+ppAlts :: [FlowType] -> FlowType -> Poly PP.Doc
 ppAlts alts (Fix f) = case f of
   Alt a b -> ppAlts (a:alts) b
-  x       -> PP.align (sep (map pp (reverse (Fix x:alts))))
+  x       -> PP.align . sep <$> mapM pp (reverse (Fix x:alts))
   where
     sep [x]    = x
     sep (x:xs) = x PP.<+> PP.string "|" PP.<$> sep xs
@@ -213,43 +219,65 @@ mayWrap (Fix f) x = case f of
   Array _    -> PP.parens x
   _          -> x
 
-ppObject :: HashMap Text FlowType -> [PP.Doc]
-ppObject = map
-  (\(name, fty') ->
-     case fty' of
-       Fix (Omitable fty) -> text name PP.<> PP.text "?" PP.<> PP.colon PP.<+> pp fty
-       fty -> text name PP.<> PP.colon PP.<+> pp fty)
-  . H.toList
+ppObject :: HashMap Text FlowType -> Poly [PP.Doc]
+ppObject = mapM ppField . H.toList
+  where
+    ppField (name, fty) = do
+      case fty of
+        Fix (Omitable fty') ->
+          (\fty'' -> text name PP.<> PP.text "?" PP.<> PP.colon PP.<+> fty'') <$> pp fty'
+        fty' ->
+          (\fty'' -> text name PP.<> PP.colon PP.<+> fty'') <$> pp fty'
 
-pp :: FlowType -> PP.Doc
+getVar :: TypeRep -> Poly Text
+getVar rep = do
+  s <- get
+  case M.lookup rep s of
+    Just i -> return i
+    Nothing -> do
+      let r = polyVarNames !! M.size s
+      r <$ modify' (M.insert rep r)
+
+polyVarNames :: [Text]
+polyVarNames =
+  map T.singleton ['A'..'Z'] ++
+  zipWith (\i t -> t `T.append` T.pack (show i)) [0 :: Int ..] polyVarNames
+
+pp :: FlowType -> Poly PP.Doc
 pp (Fix ft) = case ft of
-  ObjectMap keyName a -> braceList
-    [ PP.brackets (text keyName PP.<> PP.text ": string") PP.<>
-      PP.colon PP.<+>
-      pp a
-    ]
-  Object hm -> braceList (ppObject hm)
-  ExactObject hm -> braceBarList (ppObject hm)
-  Array a -> mayWrap a (pp a) PP.<> PP.string "[]"
-  Tuple t -> PP.list (map pp (V.toList t))
+  ObjectMap keyName a ->
+    (\r -> braceList
+      [ PP.brackets (text keyName PP.<> PP.text ": string") PP.<>
+        PP.colon PP.<+>
+        r
+      ]) <$> pp a
+  Object hm -> braceList <$> ppObject hm
+  ExactObject hm -> braceBarList <$> ppObject hm
+  Array a -> (\r -> mayWrap a r PP.<> PP.string "[]") <$> pp a
+  Tuple t -> PP.list <$> mapM pp (V.toList t)
   Alt a b -> ppAlts [a] b
-  Prim pt -> case pt of
+  Prim pt -> return $ case pt of
     Boolean -> PP.text "boolean"
     Number  -> PP.text "number"
     String  -> PP.text "string"
     Void    -> PP.text "void"
     Any     -> PP.text "any"
     Mixed   -> PP.text "mixed"
-  Nullable a -> PP.char '?' PP.<> mayWrap a (pp a)
-  Omitable a -> PP.char '?' PP.<> mayWrap a (pp a) -- hopefully these are caught
-  Literal a -> ppJson a
-  Tag t -> PP.squotes (text t)
-  Name (FlowName _ t) -> text t
-  _ -> PP.string (show ft)
+  Nullable a -> (\r -> PP.char '?' PP.<> mayWrap a r) <$> pp a
+  Omitable a -> (\r -> PP.char '?' PP.<> mayWrap a r) <$> pp a -- hopefully these are caught
+  Literal a -> return (ppJson a)
+  Tag t -> return (PP.squotes (text t))
+  Name (FlowName _ t) -> return (text t)
+  PolyVar rep -> text <$> getVar rep
+  PolyApply a vars -> do
+    n  <- pp a
+    vs <- mapM getVar vars
+    return (n PP.<> PP.angles (PP.hsep (PP.punctuate PP.comma (map text vs))))
+  _ -> return (PP.string (show ft))
 
 -- | Pretty-print a flowtype in flowtype syntax
 showFlowType :: FlowType -> Text
-showFlowType = T.pack . show . pp
+showFlowType ft = T.pack (show (evalState (pp ft) M.empty))
 
 --------------------------------------------------------------------------------
 -- Module exporting
@@ -259,9 +287,16 @@ exportFlowTypeAs :: Text -> FlowType -> Text
 exportFlowTypeAs name ft =
   T.pack . render $
   PP.string "export type " PP.<>
-  PP.string (T.unpack name) PP.<+> PP.string "=" PP.<$>
-  PP.indent 2 (pp ft) PP.<> PP.string ";"
+  PP.string (T.unpack name) PP.<> withVars (runState (pp ft) M.empty)
   where
+    main r = PP.string "=" PP.<$> PP.indent 2 r PP.<> PP.string ";"
+    withVars (r, vars)
+      | M.null vars = PP.space PP.<> main r
+      | otherwise = PP.angles (PP.hsep
+                               (PP.punctuate PP.comma (map text (M.elems vars))))
+                    PP.<+>
+                    main r
+
     render = ($[]) . PP.displayS . PP.renderPretty 1.0 80
 
 -- | Compute all the dependencies of a 'FlowTyped' thing, including itself.
@@ -334,12 +369,20 @@ defaultFlowTypeName p = Just (T.pack (symbolVal (pGetName (fmap from p))))
 
 flowTypePreferName :: (Typeable a, FlowTyped a) => Proxy a -> FlowType
 flowTypePreferName p = case flowTypeName p of
-  Just n  -> Fix (Name (FlowName p n))
+  Just n  ->
+    let vars = flowTypeVars p
+        name = Fix (Name (FlowName p n))
+    in if not (null vars)
+       then Fix (PolyApply name vars)
+       else name
   Nothing -> flowType p
 
 class Typeable a => FlowTyped a where
   flowType :: Proxy a -> FlowType
   flowTypeName :: Proxy a -> Maybe Text
+
+  flowTypeVars :: Proxy a -> [TypeRep]
+  flowTypeVars _ = []
 
   flowOptions :: Proxy a -> Options
   flowOptions _ = A.defaultOptions
@@ -656,16 +699,25 @@ instance FlowTyped a => FlowTyped (HashSet.HashSet a) where
   flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
   flowTypeName _ = Nothing
 
+data Var :: Nat -> Type where Var :: Var a
+
+instance Typeable a => FlowTyped (Var a) where
+  isPrim _ = False
+  flowType _ = Fix (PolyVar (typeRep (Proxy :: Proxy (Var a))))
+  flowTypeName _ = Nothing
+
 -- | This instance is defined recursively. You'll probably need to use
 -- 'dependencies' to extract a usable definition
-instance FlowTyped a => FlowTyped (Tree.Tree a) where
+instance (Typeable a, KnownNat a, v ~ Var a) => FlowTyped (Tree.Tree v) where
   isPrim _ = False
-  flowType _ = Fix (Tuple
-                    (V.fromList
-                     [ flowType (Proxy :: Proxy a)
-                     , Fix (Array (flowType (Proxy :: Proxy (Tree.Tree a))))
-                     ]))
+  flowType _ = Fix
+    (Tuple
+     (V.fromList
+      [ flowType (Proxy :: Proxy v)
+      , Fix (Array (flowTypePreferName (Proxy :: Proxy (Tree.Tree v))))
+      ]))
   flowTypeName _ = Just "Tree"
+  flowTypeVars _ = [typeRep (Proxy :: Proxy v)]
 
 instance FlowTyped () where
   isPrim _ = False

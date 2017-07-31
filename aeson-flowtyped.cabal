@@ -29,13 +29,14 @@ library
     , vector
     , text
     , recursion-schemes
+    , containers
     , time
     , unordered-containers
-    , containers
     , reflection
     , wl-pprint
     , free
     , scientific
+    , transformers
   exposed-modules:
       Data.Aeson.Flow
   other-modules:
@@ -53,6 +54,7 @@ test-suite aeson-flowtyped
     , vector
     , text
     , recursion-schemes
+    , containers
     , aeson-flowtyped
     , tasty
     , tasty-hunit

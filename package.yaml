@@ -13,17 +13,18 @@ dependencies:
 - vector
 - text
 - recursion-schemes
+- containers
 library:
   source-dirs: src
   exposed-modules: Data.Aeson.Flow
   dependencies:
   - time
   - unordered-containers
-  - containers
   - reflection
   - wl-pprint
   - free
   - scientific
+  - transformers
 tests:
   aeson-flowtyped:
     main: Spec.hs
