@@ -1,12 +1,12 @@
 name: aeson-flowtyped
 license: BSD3
-synopsis: Create Flow type definitions from Haskell data types.
 description: Create Flow type definitions from Haskell data types.
+synopsis: Create Flow type definitions from Haskell data types.
 license-file: LICENSE
 author: Mike Ledger <mike@quasimal.com>
 maintainer: mike@quasimal.com
 category: Web
-version: 0.7.1
+version: 0.7.5
 dependencies:
 - base >= 4.9 && <4.11
 - aeson >= 0.8
@@ -32,3 +32,6 @@ tests:
     - aeson-flowtyped
     - tasty
     - tasty-hunit
+    - unordered-containers
+
+github: mikeplus64/aeson-flowtyped

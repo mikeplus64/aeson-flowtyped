@@ -25,6 +25,7 @@ module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
   , FlowType
+  , Fix (..)
   , FlowTypeF (..)
     -- * Code generation
     -- ** Wholesale ES6/flow modules
@@ -57,16 +58,20 @@ import           Data.Functor.Compose
 import           Data.Functor.Foldable   hiding (fold)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
+import qualified Data.HashSet            as HashSet
 import           Data.Int
+import qualified Data.IntSet             as IntSet
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific         (Scientific)
+import qualified Data.Set                as Set
 import qualified Data.Set                as Set
 import           Data.Text               (Text)
 import qualified Data.Text               as T
 import qualified Data.Text.IO            as TIO
 import qualified Data.Text.Lazy          as TL
 import           Data.Time               (UTCTime)
+import qualified Data.Tree               as Tree
 import           Data.Typeable
 import           Data.Vector             (Vector)
 import qualified Data.Vector             as V
@@ -125,7 +130,7 @@ instance Ord FlowName where
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
-  | Map !(Vector (Text, a))
+  | ObjectMap !Text a
   | Array a
   | Tuple !(Vector a)
   | Fun !(Vector (Text, a)) a
@@ -139,7 +144,8 @@ data FlowTypeF a
   | Poly !Var !(Vector a)
   | PolyVar !Var
   deriving (Show, Eq, Functor, Traversable, Foldable)
--- XXX: vector >= 0.12 has Eq1 vector which allows us to derive eq
+-- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix FlowTypeF
+-- and related types
 
 instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
@@ -165,15 +171,11 @@ text = PP.text . T.unpack
 ppAlts :: [FlowType] -> FlowType -> PP.Doc
 ppAlts alts (Fix f) = case f of
   Alt a b -> ppAlts (a:alts) b
-  x       -> PP.align
-             (sep
-              (map pp
-               (reverse (Fix x:alts))))
+  x       -> PP.align (sep (map pp (reverse (Fix x:alts))))
   where
     sep [x]    = x
     sep (x:xs) = x PP.<+> PP.string "|" PP.<$> sep xs
     sep _      = PP.empty
-
 
 braceList :: [PP.Doc] -> PP.Doc
 braceList =
@@ -208,6 +210,7 @@ mayWrap (Fix f) x = case f of
   Nullable _ -> PP.parens x
   Omitable _ -> PP.parens x
   Alt _ _    -> PP.parens x
+  Array _    -> PP.parens x
   _          -> x
 
 ppObject :: HashMap Text FlowType -> [PP.Doc]
@@ -220,6 +223,11 @@ ppObject = map
 
 pp :: FlowType -> PP.Doc
 pp (Fix ft) = case ft of
+  ObjectMap keyName a -> braceList
+    [ PP.brackets (text keyName PP.<> PP.text ": string") PP.<>
+      PP.colon PP.<+>
+      pp a
+    ]
   Object hm -> braceList (ppObject hm)
   ExactObject hm -> braceBarList (ppObject hm)
   Array a -> mayWrap a (pp a) PP.<> PP.string "[]"
@@ -232,8 +240,8 @@ pp (Fix ft) = case ft of
     Void    -> PP.text "void"
     Any     -> PP.text "any"
     Mixed   -> PP.text "mixed"
-  Nullable a -> PP.char '?' PP.<> pp a
-  Omitable a -> PP.char '?' PP.<> pp a -- hopefully these are caught
+  Nullable a -> PP.char '?' PP.<> mayWrap a (pp a)
+  Omitable a -> PP.char '?' PP.<> mayWrap a (pp a) -- hopefully these are caught
   Literal a -> ppJson a
   Tag t -> PP.squotes (text t)
   Name (FlowName _ t) -> text t
@@ -624,6 +632,44 @@ instance FlowTyped UTCTime where
 instance Typeable a => FlowTyped (Fixed a) where
   isPrim  _ = False
   flowType _ = Fix (Prim Number)
+  flowTypeName _ = Nothing
+
+-- | This is at odds with "aeson" which defines 'A.ToJSONKey'
+instance FlowTyped a => FlowTyped (HashMap Text a) where
+  -- XXX this is getting quite incoherent, what makes something "Prim" or not...
+  isPrim _ = True
+  flowType _ = Fix (ObjectMap "key" (flowTypePreferName (Proxy :: Proxy a)))
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (Set.Set a) where
+  isPrim _ = False
+  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowTypeName _ = Nothing
+
+instance FlowTyped IntSet.IntSet where
+  isPrim _ = False
+  flowType _ = Fix (Array (Fix (Prim Number)))
+  flowTypeName _ = Nothing
+
+instance FlowTyped a => FlowTyped (HashSet.HashSet a) where
+  isPrim _ = False
+  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowTypeName _ = Nothing
+
+-- | This instance is defined recursively. You'll probably need to use
+-- 'dependencies' to extract a usable definition
+instance FlowTyped a => FlowTyped (Tree.Tree a) where
+  isPrim _ = False
+  flowType _ = Fix (Tuple
+                    (V.fromList
+                     [ flowType (Proxy :: Proxy a)
+                     , Fix (Array (flowType (Proxy :: Proxy (Tree.Tree a))))
+                     ]))
+  flowTypeName _ = Just "Tree"
+
+instance FlowTyped () where
+  isPrim _ = False
+  flowType _ = Fix (Tuple V.empty)
   flowTypeName _ = Nothing
 
 -- monomorphic numeric instances
