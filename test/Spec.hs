@@ -56,10 +56,11 @@ instance FlowTyped Hmap
 data Poly2 a b = Poly2 a b | Poly2Go (Poly2 a b)
   deriving (Generic)
 
-instance (a ~ Var 0, b ~ Var 1) => FlowTyped (Poly2 a b) where
+instance (Typeable a, FlowTyped a, Typeable b, FlowTyped b) =>
+         FlowTyped (Poly2 a b) where
   flowTypeVars _ =
-    [ typeRep (Proxy :: Proxy a)
-    , typeRep (Proxy :: Proxy b)
+    [ typeRep (Var :: Var 0)
+    , typeRep (Var :: Var 1)
     ]
 
 main :: IO ()

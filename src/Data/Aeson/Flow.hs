@@ -85,6 +85,7 @@ import qualified Data.Vector.Storable             as VS
 import qualified Data.Vector.Unboxed              as VU
 import qualified Data.Void                        as Void
 import           Data.Word
+import           Data.Maybe
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen          as PP
@@ -368,13 +369,17 @@ defaultFlowTypeName p = Just (T.pack (symbolVal (pGetName (fmap from p))))
     pGetName _ = Proxy
 
 flowTypePreferName :: (Typeable a, FlowTyped a) => Proxy a -> FlowType
-flowTypePreferName p = case flowTypeName p of
-  Just n | null vars -> name
-         | otherwise -> Fix (PolyApply name vars)
+flowTypePreferName p = fromMaybe (flowType p) (flowTypeRecur p)
+
+flowTypeRecur :: (Typeable a, FlowTyped a) => Proxy a -> Maybe FlowType
+flowTypeRecur p = case flowTypeName p of
+  Just n
+    | null vars -> Just name
+    | otherwise -> Just (Fix (PolyApply name vars))
     where
       vars = flowTypeVars p
       name = Fix (Name (FlowName p n))
-  Nothing -> flowType p
+  Nothing -> Nothing
 
 class Typeable a => FlowTyped a where
   flowType :: Proxy a -> FlowType
@@ -693,25 +698,25 @@ instance FlowTyped a => FlowTyped (HashSet.HashSet a) where
   flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
   flowTypeName _ = Nothing
 
-data Var :: Nat -> Type where Var :: Var a
+data Var :: k -> Type where Var :: Var a
 
-instance Typeable a => FlowTyped (Var a) where
+instance (Typeable a, Typeable k) => FlowTyped (Var (a :: k)) where
   isPrim _ = False
-  flowType _ = Fix (PolyVar (typeRep (Proxy :: Proxy (Var a))))
+  flowType _ = Fix (PolyVar (typeRep (Var :: Var a)))
   flowTypeName _ = Nothing
 
 -- | This instance is defined recursively. You'll probably need to use
 -- 'dependencies' to extract a usable definition
-instance (Typeable a, KnownNat a, v ~ Var a) => FlowTyped (Tree.Tree v) where
+instance Typeable a => FlowTyped (Tree.Tree a) where
   isPrim _ = False
-  flowType _ = Fix
-    (Tuple
-     (V.fromList
-      [ flowType (Proxy :: Proxy v)
-      , Fix (Array (flowTypePreferName (Proxy :: Proxy (Tree.Tree v))))
-      ]))
+  flowType _ = Fix (Tuple
+                    (V.fromList
+                     [ flowType (Proxy :: Proxy (Var a))
+                     , Fix (Array
+                            (fromJust (flowTypeRecur (Proxy :: Proxy (Tree.Tree a)))))
+                     ]))
   flowTypeName _ = Just "Tree"
-  flowTypeVars _ = [typeRep (Proxy :: Proxy v)]
+  flowTypeVars _ = [typeRep (Var :: Var a)]
 
 instance FlowTyped () where
   isPrim _ = False
