@@ -128,12 +128,22 @@ instance Show FlowName where
   show (FlowName _ t) = show t
 
 instance Eq FlowName where
-  FlowName pa _ == FlowName pb _ = typeOf pa == typeOf pb
+  FlowName _ n0 == FlowName _ n1 = n0 == n1
 
 instance Ord FlowName where
-  FlowName pa _ `compare` FlowName pb _ = compare (typeOf pa) (typeOf pb)
+  FlowName _ n0 `compare` FlowName _ n1 = compare n0 n1
+
+data Flowable where
+  Flowable :: (Typeable a, FlowTyped a) => Proxy a -> Flowable
+
+instance Show Flowable where
+  show (Flowable t) = show (typeRep t)
+
+instance Eq Flowable where
+  Flowable a == Flowable b = typeRep a == typeRep b
 
 -- | The main AST for flowtypes.
+
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
@@ -150,7 +160,8 @@ data FlowTypeF a
   | Name !FlowName
   | Instantiate !TypeRep a
   | PolyVar !TypeRep
-  | PolyApply a ![TypeRep]
+  | PolyUse !Flowable
+  | PolyApply a [a]
   deriving (Show, Eq, Functor, Traversable, Foldable)
 -- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix FlowTypeF
 -- and related types
@@ -273,10 +284,11 @@ pp (Fix ft) = case ft of
   Tag t -> return (PP.squotes (text t))
   Name (FlowName _ t) -> return (text t)
   PolyVar rep -> text <$> getVar rep
+  PolyUse (Flowable fp) -> pp (flowType fp)
   PolyApply a vars -> do
     n  <- pp a
-    vs <- mapM getVar vars
-    return (n PP.<> PP.angles (PP.hsep (PP.punctuate PP.comma (map text vs))))
+    vs <- mapM pp vars
+    return (n PP.<> PP.angles (PP.hsep (PP.punctuate PP.comma vs)))
   _ -> return (PP.string (show ft))
 
 -- | Pretty-print a flowtype in flowtype syntax
@@ -305,9 +317,6 @@ flowTypeAs isExport name ft =
                     PP.<+>
                     main r
     render = ($[]) . PP.displayS . PP.renderPretty 1.0 80
-
-
-
 
 -- | Compute all the dependencies of a 'FlowTyped' thing, including itself.
 dependencies :: (Typeable a, FlowTyped a) => Proxy a -> Set.Set FlowName
@@ -357,10 +366,14 @@ defaultFlowModuleOptions = FlowModuleOptions
   }
 
 data Export where
-  Export :: (Typeable a, FlowTyped a) => Proxy a -> Export
+  Export :: (Typeable a, FlowTyped a)
+         => Proxy a
+         -> Export
 
 instance Eq Export where
-  Export p0 == Export p1 = typeRep p0 == typeRep p1
+  Export p0 == Export p1 =
+    flowTypeName p0 == flowTypeName p1 ||
+    typeRep p0 == typeRep p1
 
 exportsDependencies :: [Export] -> Set.Set FlowName
 exportsDependencies = foldMap (\(Export a) -> dependencies a)
@@ -412,8 +425,11 @@ flowTypeRecur :: (Typeable a, FlowTyped a) => Proxy a -> Maybe FlowType
 flowTypeRecur p = case flowTypeName p of
   Just n
     | null vars -> Just name
-    | otherwise -> Just (Fix (PolyApply name vars))
+    | otherwise -> Just (Fix (PolyApply name (map doPoly vars)))
     where
+      doPoly :: TypeRep -> FlowType
+      doPoly = Fix . PolyVar
+
       vars = flowTypeVars p
       name = Fix (Name (FlowName p n))
   Nothing -> Nothing
@@ -742,16 +758,16 @@ data Var :: k -> Type where Var :: Var a
 
 instance (Typeable a, Typeable k) => FlowTyped (Var (a :: k)) where
   isPrim _ = False
-  flowType _ = Fix (PolyVar (typeRep (Var :: Var a)))
+  flowType _ = Fix (PolyVar (typeOf (Var :: Var a)))
   flowTypeName _ = Nothing
 
 -- | This instance is defined recursively. You'll probably need to use
 -- 'dependencies' to extract a usable definition
-instance Typeable a => FlowTyped (Tree.Tree a) where
+instance (FlowTyped a, Typeable a) => FlowTyped (Tree.Tree a) where
   isPrim _ = False
   flowType _ = Fix (Tuple
                     (V.fromList
-                     [ flowType (Proxy :: Proxy (Var a))
+                     [ Fix (PolyUse (Flowable (Proxy :: Proxy a)))
                      , Fix (Array
                             (fromJust (flowTypeRecur (Proxy :: Proxy (Tree.Tree a)))))
                      ]))
