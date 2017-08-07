@@ -66,6 +66,7 @@ import           Data.HashMap.Strict              (HashMap)
 import qualified Data.HashMap.Strict              as H
 import qualified Data.HashSet                     as HashSet
 import           Data.Int
+import qualified Data.IntMap.Strict               as I
 import qualified Data.IntSet                      as IntSet
 import           Data.Kind                        (Type)
 import           Data.Map.Strict                  (Map)
@@ -747,6 +748,14 @@ instance (Typeable a, FlowTyped a) => FlowTyped (Set.Set a) where
 instance FlowTyped IntSet.IntSet where
   isPrim _ = False
   flowType _ = Fix (Array (Fix (Prim Number)))
+  flowTypeName _ = Nothing
+
+instance (Typeable a, FlowTyped a) => FlowTyped (I.IntMap a) where
+  isPrim _ = False
+  flowType _ = Fix . Array . Fix . Tuple . V.fromListN 2 $
+    [ flowType (Proxy :: Proxy Int)
+    , flowType (Proxy :: Proxy a)
+    ]
   flowTypeName _ = Nothing
 
 instance (Typeable a, FlowTyped a) => FlowTyped (HashSet.HashSet a) where
