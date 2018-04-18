@@ -1,6 +1,8 @@
--- This file has been generated from package.yaml by hpack version 0.17.0.
+-- This file has been generated from package.yaml by hpack version 0.21.2.
 --
 -- see: https://github.com/sol/hpack
+--
+-- hash: ced57bbef6c7c2c16210827ed529eb13b29c0f96c697b5f095bbaa761b9077d8
 
 name:           aeson-flowtyped
 version:        0.9.1
@@ -24,19 +26,19 @@ library
   hs-source-dirs:
       src
   build-depends:
-      base >= 4.9 && <4.11
-    , aeson >= 0.8
-    , vector
-    , text
-    , recursion-schemes
+      aeson >=0.8
+    , base >=4.9 && <4.11
     , containers
-    , time
-    , unordered-containers
-    , reflection
-    , wl-pprint
     , free
+    , recursion-schemes
+    , reflection
     , scientific
+    , text
+    , time
     , transformers
+    , unordered-containers
+    , vector
+    , wl-pprint
   exposed-modules:
       Data.Aeson.Flow
   other-modules:
@@ -46,17 +48,19 @@ library
 test-suite aeson-flowtyped
   type: exitcode-stdio-1.0
   main-is: Spec.hs
+  other-modules:
+      Paths_aeson_flowtyped
   hs-source-dirs:
       test
   build-depends:
-      base >= 4.9 && <4.11
-    , aeson >= 0.8
-    , vector
-    , text
-    , recursion-schemes
-    , containers
+      aeson >=0.8
     , aeson-flowtyped
+    , base >=4.9 && <4.11
+    , containers
+    , recursion-schemes
     , tasty
     , tasty-hunit
+    , text
     , unordered-containers
+    , vector
   default-language: Haskell2010
