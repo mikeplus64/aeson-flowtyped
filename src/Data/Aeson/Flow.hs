@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                       #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE DeriveAnyClass            #-}
@@ -465,17 +466,33 @@ class GFlowVal g where
 
 instance (KnownSymbol name, GFlowVal c) =>
          GFlowTyped (D1 ('MetaData name mod pkg t) c) where
-  gflowType opt _ = runFlowI (checkNullary (gflowVal opt (Proxy :: Proxy (c x))))
+  gflowType opt _ = runFlowI (postprocess (gflowVal opt (Proxy :: Proxy (c x))))
     where
-      checkNullary :: FlowTypeI -> FlowTypeI
-      checkNullary i
+      postprocess :: FlowTypeI -> FlowTypeI
+      postprocess i
+#if MIN_VERSION_aeson(1,2,0)
+        | not (tagSingleConstructors opt), Just o <- removeSingleConstructorTag i =
+          o
+#endif
         | allNullaryToStringTag opt, Just r <- go [] i, not (null r) =
           foldr1
           (\a b -> FC (NoInfo (Alt a b)))
           (map (FC . NoInfo . Tag) r)
         | otherwise = i
         where
-          -- single-constructor data types have a "contents" field of Prim Void
+#if MIN_VERSION_aeson(1,2,0)
+          removeSingleConstructorTag :: FlowTypeI -> Maybe FlowTypeI
+          removeSingleConstructorTag (FC (Info (ExactObject hm))) =
+            case sumEncoding opt of
+              TaggedObject tfn _ ->
+                Just (FC (Info (ExactObject (H.delete (T.pack tfn) hm))))
+              _ ->
+                Nothing
+          removeSingleConstructorTag _ =
+            Nothing
+#endif
+
+          -- no-field constructors have a "contents" field of Prim Void
           isNullary :: FlowTypeI -> Bool
           isNullary (FC (Info (Prim Void))) = True
           isNullary _                       = False
