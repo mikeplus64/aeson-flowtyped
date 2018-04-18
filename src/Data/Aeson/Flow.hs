@@ -22,6 +22,8 @@
 {-# LANGUAGE UndecidableInstances      #-}
 {-# LANGUAGE ViewPatterns              #-}
 -- | Derive <https://flow.org/ Flow types> using aeson 'Options'.
+--
+-- Does not currently support the 'unwrapUnaryRecords' option.
 module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
@@ -408,7 +410,9 @@ writeFlowModule opts path =
 
 -- | 'flowType' using 'Generic'
 defaultFlowType :: (Generic a, GFlowTyped (Rep a)) => Options -> Proxy a -> FlowType
-defaultFlowType opt p = gflowType opt (fmap from p)
+defaultFlowType opt p
+  | unwrapUnaryRecords opt = error "aeson-flowtype does not yet support the unwrapUnaryRecords option."
+  | otherwise = gflowType opt (fmap from p)
 
 -- | 'flowTypeName' using 'Generic'
 defaultFlowTypeName
