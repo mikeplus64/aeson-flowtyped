@@ -800,4 +800,3 @@ $(concat <$> mapM
   , [t|Word|], [t|Word8|], [t|Word16|], [t|Word32|], [t|Word64|]
   , [t|Float|], [t|Double|], [t|Scientific|]
   ])
-
