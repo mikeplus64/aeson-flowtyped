@@ -40,6 +40,7 @@ module Data.Aeson.Flow
   , showFlowType
   , dependencies
   , exportsDependencies
+  , FlowTyFields (..)
     -- * Internals
   , defaultFlowType
   , defaultFlowTypeName
@@ -456,6 +457,44 @@ class FlowTyped a where
     => Proxy a
     -> Maybe Text
   flowTypeName = defaultFlowTypeName
+
+--------------------------------------------------------------------------------
+
+type family Deconstruct k :: (Symbol, Type)
+type instance Deconstruct (f a b) = '(a, b)
+
+-- | Useful for declaring flowtypes from type-level key/value sets, like
+--
+-- @
+-- FlowTyFields :: FlowTyFields Person '['("name", String), '("email", String)]
+-- @
+data FlowTyFields :: Type -> [k] -> Type where
+  FlowTyFields :: FlowTyFields k fs
+
+class ReifyFlowTyFields a where
+  reifyFlowTyFields :: Proxy a -> HashMap Text FlowType -> HashMap Text FlowType
+
+instance ReifyFlowTyFields '[] where
+  reifyFlowTyFields _ = id
+
+instance ( Deconstruct x ~ '(k, v)
+         , KnownSymbol k
+         , FlowTyped v
+         , ReifyFlowTyFields xs
+         ) =>
+         ReifyFlowTyFields (x:xs) where
+  reifyFlowTyFields _ acc =
+    reifyFlowTyFields (Proxy :: Proxy xs) $!
+    H.insert
+    (T.pack (symbolVal (Proxy :: Proxy k)))
+    (flowType (Proxy :: Proxy v))
+    acc
+
+instance (FlowTyped a, ReifyFlowTyFields fs) => FlowTyped (FlowTyFields a fs) where
+  flowType _ = Fix (ExactObject (reifyFlowTyFields (Proxy :: Proxy fs) H.empty))
+  flowTypeName _ = flowTypeName (Proxy :: Proxy a)
+
+--------------------------------------------------------------------------------
 
 class GFlowTyped g where
   gflowType :: Options -> Proxy (g x) -> FlowType
