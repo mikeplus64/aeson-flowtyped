@@ -41,6 +41,7 @@ module Data.Aeson.Flow
   , dependencies
   , exportsDependencies
   , FlowTyFields (..)
+  , DeconstructField
     -- * Internals
   , defaultFlowType
   , defaultFlowTypeName
@@ -460,8 +461,8 @@ class FlowTyped a where
 
 --------------------------------------------------------------------------------
 
-type family Deconstruct k :: (Symbol, Type)
-type instance Deconstruct (f a b) = '(a, b)
+type family DeconstructField k :: (Symbol, Type)
+type instance DeconstructField (f a b) = '(a, b)
 
 -- | Useful for declaring flowtypes from type-level key/value sets, like
 --
@@ -477,7 +478,7 @@ class ReifyFlowTyFields a where
 instance ReifyFlowTyFields '[] where
   reifyFlowTyFields _ = id
 
-instance ( Deconstruct x ~ '(k, v)
+instance ( DeconstructField x ~ '(k, v)
          , KnownSymbol k
          , FlowTyped v
          , ReifyFlowTyFields xs

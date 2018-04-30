@@ -2,10 +2,10 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 81c1833457c797a4ba78ca16134754cf22131808e790fc9b0ac64fb97325b89a
+-- hash: cfcaa88d6f201209aecef9940a0be6db4ec0a667865ff8a547df87e4b8ff2e20
 
 name:           aeson-flowtyped
-version:        0.10.0
+version:        0.10.1
 synopsis:       Create Flow type definitions from Haskell data types.
 description:    Create Flow type definitions from Haskell data types.
 category:       Web
