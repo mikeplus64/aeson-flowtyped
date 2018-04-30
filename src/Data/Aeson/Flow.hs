@@ -461,8 +461,8 @@ class FlowTyped a where
 
 --------------------------------------------------------------------------------
 
-type family DeconstructField k :: (Symbol, Type)
-type instance DeconstructField (f a b) = '(a, b)
+type family DeconstructField (k :: t) :: (Symbol, Type)
+type instance DeconstructField '(a, b) = '(a, b)
 
 -- | Useful for declaring flowtypes from type-level key/value sets, like
 --
