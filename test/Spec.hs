@@ -91,7 +91,6 @@ main = defaultMain $ testGroup "aeson-flowtyped"
   , testCase "User export" $
     "export type User =\n\
     \  {| extraInfo: mixed,\n\
-    \     tag: 'User',\n\
     \     realname: ?string,\n\
     \     username: string,\n\
     \     dob: ?[number,number,number] |};" @=?
@@ -99,7 +98,7 @@ main = defaultMain $ testGroup "aeson-flowtyped"
 
   , testCase "Recursive type export" $
     "export type Recur =\n\
-    \  {| tag: 'Recur', stuff: User[], recurs: Recur[], asdf: number |};" @=?
+    \  {| stuff: User[], recurs: Recur[], asdf: number |};" @=?
     exportFlowTypeAs "Recur" (flowType (Proxy :: Proxy Recur))
 
   , testCase "Nullary string tags (2 tags)" $

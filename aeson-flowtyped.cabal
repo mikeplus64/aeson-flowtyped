@@ -1,11 +1,11 @@
--- This file has been generated from package.yaml by hpack version 0.20.0.
+-- This file has been generated from package.yaml by hpack version 0.21.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: cfcaa88d6f201209aecef9940a0be6db4ec0a667865ff8a547df87e4b8ff2e20
+-- hash: ced57bbef6c7c2c16210827ed529eb13b29c0f96c697b5f095bbaa761b9077d8
 
 name:           aeson-flowtyped
-version:        0.10.1
+version:        0.9.1
 synopsis:       Create Flow type definitions from Haskell data types.
 description:    Create Flow type definitions from Haskell data types.
 category:       Web
@@ -48,6 +48,8 @@ library
 test-suite aeson-flowtyped
   type: exitcode-stdio-1.0
   main-is: Spec.hs
+  other-modules:
+      Paths_aeson_flowtyped
   hs-source-dirs:
       test
   build-depends:
@@ -61,6 +63,4 @@ test-suite aeson-flowtyped
     , text
     , unordered-containers
     , vector
-  other-modules:
-      Paths_aeson_flowtyped
-  default-language: Haskell2010
+default-language: Haskell2010
