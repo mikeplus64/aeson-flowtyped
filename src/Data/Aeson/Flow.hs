@@ -193,6 +193,9 @@ type FlowType = Fix FlowTypeF
 text :: Text -> PP.Doc
 text = PP.text . T.unpack
 
+squotes :: Text -> PP.Doc
+squotes = T.replace "'" "\\'" . text
+
 type Poly = State (Map TypeRep Text)
 
 ppAlts :: [FlowType] -> FlowType -> Poly PP.Doc
@@ -221,7 +224,7 @@ braceBarList =
 ppJson :: A.Value -> PP.Doc
 ppJson v = case v of
   A.Array a  -> PP.list (map ppJson (V.toList a))
-  A.String t -> PP.squotes (text t)
+  A.String t -> squotes t
   A.Number n -> PP.string (show n)
   A.Bool t -> if t then PP.string "true" else PP.string "false"
   A.Null -> PP.string "null"
@@ -287,7 +290,7 @@ pp (Fix ft) = case ft of
   Nullable a -> (\r -> PP.char '?' PP.<> mayWrap a r) <$> pp a
   Omitable a -> (\r -> PP.char '?' PP.<> mayWrap a r) <$> pp a -- hopefully these are caught
   Literal a -> return (ppJson a)
-  Tag t -> return (PP.squotes (text t))
+  Tag t -> return (squotes t)
   Name (FlowName _ t) -> return (text t)
   PolyVar rep -> text <$> getVar rep
   PolyUse (Flowable fp) -> pp (flowType fp)
