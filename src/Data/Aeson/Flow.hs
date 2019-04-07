@@ -34,6 +34,8 @@ module Data.Aeson.Flow
     -- ** Wholesale ES6/flow modules
   , Export (..)
   , ModuleOptions (..)
+  , RenderOptions (..)
+  , RenderMode (..)
   , flowModuleOptions
   , typeScriptModuleOptions
   , generateModule
@@ -205,7 +207,7 @@ text :: Text -> PP.Doc
 text = PP.text . T.unpack
 
 squotes :: Text -> PP.Doc
-squotes = text . T.replace "'" "\\'"
+squotes = text . PP.squotes . T.replace "'" "\\'"
 
 type Poly = ReaderT RenderOptions (State (Map TypeRep Text))
 
