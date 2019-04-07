@@ -207,7 +207,7 @@ text :: Text -> PP.Doc
 text = PP.text . T.unpack
 
 squotes :: Text -> PP.Doc
-squotes = text . PP.squotes . T.replace "'" "\\'"
+squotes = PP.squotes . text . T.replace "'" "\\'"
 
 type Poly = ReaderT RenderOptions (State (Map TypeRep Text))
 
