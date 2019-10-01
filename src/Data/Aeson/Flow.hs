@@ -42,7 +42,7 @@ module Data.Aeson.Flow
   , pattern FPrimBoolean
   , pattern FPrimNumber
   , pattern FPrimString
-  , pattern FPrimVoid
+  , pattern FPrimBottom
   , pattern FPrimMixed
   , pattern FPrimAny
   , pattern FNullable
