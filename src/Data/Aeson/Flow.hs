@@ -242,8 +242,8 @@ pattern FPrimNumber = FPrim Number
 pattern FPrimString :: FlowType
 pattern FPrimString = FPrim String
 
-pattern FPrimVoid :: FlowType
-pattern FPrimVoid = FPrim Void
+pattern FPrimBottom :: FlowType
+pattern FPrimBottom = FPrim Bottom
 
 pattern FPrimMixed :: FlowType
 pattern FPrimMixed = FPrim Mixed
@@ -713,7 +713,7 @@ instance (KnownSymbol name, GFlowVal c) =>
 #endif
 
           -- no-field constructors have a "contents" field of Prim Void
-          isNullary :: FlowTypeI -> Bool
+          isNullary :: GFlowTypeI -> Bool
           isNullary (FC (Info (Prim a))) = case a of
             Bottom    -> True
             Null      -> True
@@ -930,47 +930,47 @@ instance ( FlowTyped a, Typeable a
 
 instance FlowTyped Text where
   isPrim  _ = True
-  flowType _ = FPrim String
+  flowType _ = FPrimString
   flowTypeName _ = Nothing
 
 instance FlowTyped TL.Text where
   isPrim  _ = True
-  flowType _ = FPrim String
+  flowType _ = FPrimString
   flowTypeName _ = Nothing
 
 instance {-# OVERLAPS #-} FlowTyped String where
   isPrim  _ = True
-  flowType _ = FPrim String
+  flowType _ = FPrimString
   flowTypeName _ = Nothing
 
 instance FlowTyped Void.Void where
   isPrim  _ = True
-  flowType _ = FPrim Void
+  flowType _ = FPrimBottom
   flowTypeName _ = Nothing
 
 instance FlowTyped Char where
   isPrim  _ = True
-  flowType _ = FPrim String
+  flowType _ = FPrimString
   flowTypeName _ = Nothing
 
 instance FlowTyped Bool where
   isPrim  _ = True
-  flowType _ = FPrim Boolean
+  flowType _ = FPrimBoolean
   flowTypeName _ = Nothing
 
 instance FlowTyped A.Value where
   isPrim  _ = True
-  flowType _ = FPrim Mixed
+  flowType _ = FPrimMixed
   flowTypeName _ = Nothing
 
 instance FlowTyped UTCTime where
   isPrim  _ = False
-  flowType _ = FPrim String
+  flowType _ = FPrimString
   flowTypeName _ = Nothing
 
 instance Typeable a => FlowTyped (Fixed a) where
   isPrim  _ = False
-  flowType _ = FPrim Number
+  flowType _ = FPrimNumber
   flowTypeName _ = Nothing
 
 -- | This is at odds with "aeson" which defines 'A.ToJSONKey'
