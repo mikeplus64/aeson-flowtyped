@@ -27,9 +27,27 @@
 module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
-  , FlowType
   , Fix (..)
-  , FlowTypeF (..)
+  , FlowTypeF
+  , FlowType
+  , pattern FObject
+  , pattern FExactObject
+  , pattern FObjectMap
+  , pattern FArray
+  , pattern FTuple
+  , pattern FFun
+  , pattern FAlt
+  , pattern FPrim
+  , pattern FNullable
+  , pattern FOmitable
+  , pattern FLiteral
+  , pattern FTag
+  , pattern FName
+  , pattern FInstantiate
+  , pattern FPolyVar
+  , pattern FPolyUse
+  , pattern FPolyApply
+
     -- * Code generation
     -- ** Wholesale ES6/flow modules
   , FlowModuleOptions (..)
@@ -63,7 +81,6 @@ import qualified Data.Aeson                       as A
 import           Data.Aeson.Types                 (Options (..),
                                                    SumEncoding (..))
 import           Data.Fixed                       (Fixed)
-import           Data.Foldable
 import           Data.Functor.Classes
 import           Data.Functor.Compose
 import           Data.Functor.Foldable            hiding (fold)
@@ -76,6 +93,7 @@ import qualified Data.IntSet                      as IntSet
 import           Data.Kind                        (Type)
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as M
+import           Data.Maybe
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific                  (Scientific)
@@ -93,8 +111,6 @@ import qualified Data.Vector.Storable             as VS
 import qualified Data.Vector.Unboxed              as VU
 import qualified Data.Void                        as Void
 import           Data.Word
-import           Data.Maybe
-import           Debug.Trace
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen          as PP
@@ -153,7 +169,7 @@ instance Eq Flowable where
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
-  | ObjectMap !Text a
+  | ObjectMap !Text a a
   | Array a
   | Tuple !(Vector a)
   | Fun !(Vector (Text, a)) a
@@ -169,8 +185,64 @@ data FlowTypeF a
   | PolyUse !Flowable
   | PolyApply a [a]
   deriving (Show, Eq, Functor, Traversable, Foldable)
--- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix FlowTypeF
--- and related types
+
+-- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix
+-- FlowTypeF and related types
+
+--------------------------------------------------------------------------------
+
+pattern FObject :: HashMap Text FlowType -> FlowType
+pattern FObject x = Fix (Object x)
+
+pattern FExactObject :: HashMap Text FlowType -> FlowType
+pattern FExactObject x = Fix (ExactObject x)
+
+pattern FObjectMap :: Text -> FlowType -> FlowType -> FlowType
+pattern FObjectMap keyName keyType vals = Fix (ObjectMap keyName keyType vals)
+
+pattern FArray :: FlowType -> FlowType
+pattern FArray a = Fix (Array a)
+
+pattern FTuple :: Vector FlowType -> FlowType
+pattern FTuple a = Fix (Tuple a)
+
+pattern FFun :: Vector (Text, FlowType) -> FlowType -> FlowType
+pattern FFun v t = Fix (Fun v t)
+
+pattern FAlt :: FlowType -> FlowType -> FlowType
+pattern FAlt a b = Fix (Alt a b)
+
+pattern FPrim :: PrimType -> FlowType
+pattern FPrim a = Fix (Prim a)
+
+pattern FNullable :: FlowType -> FlowType
+pattern FNullable a = Fix (Nullable a)
+
+pattern FOmitable :: FlowType -> FlowType
+pattern FOmitable a = Fix (Omitable a)
+
+pattern FLiteral :: A.Value -> FlowType
+pattern FLiteral a = Fix (Literal a)
+
+pattern FTag :: Text -> FlowType
+pattern FTag a = Fix (Tag a)
+
+pattern FName :: FlowName -> FlowType
+pattern FName a = Fix (Name a)
+
+pattern FInstantiate :: TypeRep -> FlowType -> FlowType
+pattern FInstantiate ty a = Fix (Instantiate ty a)
+
+pattern FPolyVar :: TypeRep -> FlowType
+pattern FPolyVar a = Fix (PolyVar a)
+
+pattern FPolyUse :: Flowable -> FlowType
+pattern FPolyUse a = Fix (PolyUse a)
+
+pattern FPolyApply :: FlowType -> [FlowType] -> FlowType
+pattern FPolyApply f xs = Fix (PolyApply f xs)
+
+--------------------------------------------------------------------------------
 
 instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
@@ -269,7 +341,7 @@ polyVarNames =
 
 pp :: FlowType -> Poly PP.Doc
 pp (Fix ft) = case ft of
-  ObjectMap keyName a ->
+  ObjectMap keyName keyType a ->
     (\r -> braceList
       [ PP.brackets (text keyName PP.<> PP.text ": string") PP.<>
         PP.colon PP.<+>
@@ -436,13 +508,12 @@ flowTypeRecur :: (Typeable a, FlowTyped a) => Proxy a -> Maybe FlowType
 flowTypeRecur p = case flowTypeName p of
   Just n
     | null vars -> Just name
-    | otherwise -> Just (Fix (PolyApply name (map doPoly vars)))
+    | otherwise -> Just (FPolyApply name (map doPoly vars))
     where
       doPoly :: TypeRep -> FlowType
-      doPoly = Fix . PolyVar
-
+      doPoly = FPolyVar
       vars = flowTypeVars p
-      name = Fix (Name (FlowName p n))
+      name = FName (FlowName p n)
   Nothing -> Nothing
 
 class FlowTyped a where
@@ -500,7 +571,7 @@ instance ( DeconstructField x ~ '(k, v)
     acc
 
 instance (FlowTyped a, ReifyFlowTyFields fs) => FlowTyped (FlowTyFields a fs) where
-  flowType _ = Fix (ExactObject (reifyFlowTyFields (Proxy :: Proxy fs) H.empty))
+  flowType _ = FExactObject (reifyFlowTyFields (Proxy :: Proxy fs) H.empty)
   flowTypeName _ = flowTypeName (Proxy :: Proxy a)
 
 --------------------------------------------------------------------------------
@@ -696,22 +767,22 @@ instance (GFlowRecord f, GFlowRecord g) =>
 -- Instances
 
 instance (Typeable a, FlowTyped a) => FlowTyped [a] where
-  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
 instance (FlowTyped a, Typeable a) => FlowTyped (Vector a) where
-  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
 instance (FlowTyped a, Typeable a) => FlowTyped (VU.Vector a) where
-  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
 instance (FlowTyped a, Typeable a) => FlowTyped (VS.Vector a) where
-  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
@@ -719,13 +790,13 @@ instance ( FlowTyped a, Typeable a
          , FlowTyped b, Typeable b) => FlowTyped (a, b) where
   flowTypeName _ = Nothing
   flowType _ =
-    Fix (Tuple (V.fromList [aFt, bFt]))
+    FTuple (V.fromList [aFt, bFt])
     where
       aFt = flowTypePreferName (Proxy :: Proxy a)
       bFt = flowTypePreferName (Proxy :: Proxy b)
 
 instance (FlowTyped a, Typeable a) => FlowTyped (Maybe a) where
-  flowType _ = Fix (Nullable (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FNullable (flowTypePreferName (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
@@ -733,10 +804,9 @@ instance ( FlowTyped a, Typeable a
          , FlowTyped b, Typeable b) =>
          FlowTyped (Either a b) where
   flowTypeName _ = Nothing
-  flowType _ = Fix
-    (Alt
-     (Fix (ExactObject (H.fromList [("Left", aFt)])))
-     (Fix (ExactObject (H.fromList [("Right", bFt)]))))
+  flowType _ = FAlt
+    (FExactObject (H.fromList [("Left", aFt)]))
+    (FExactObject (H.fromList [("Right", bFt)]))
     where
       aFt = flowTypePreferName (Proxy :: Proxy a)
       bFt = flowTypePreferName (Proxy :: Proxy b)
@@ -746,7 +816,7 @@ instance ( FlowTyped a, Typeable a
          , FlowTyped c, Typeable c) =>
          FlowTyped (a, b, c) where
   flowTypeName _ = Nothing
-  flowType _ = Fix (Tuple (V.fromList [aFt, bFt, cFt]))
+  flowType _ = FTuple (V.fromList [aFt, bFt, cFt])
     where
       aFt = flowTypePreferName (Proxy :: Proxy a)
       bFt = flowTypePreferName (Proxy :: Proxy b)
@@ -754,64 +824,64 @@ instance ( FlowTyped a, Typeable a
 
 instance FlowTyped Text where
   isPrim  _ = True
-  flowType _ = Fix (Prim String)
+  flowType _ = FPrim String
   flowTypeName _ = Nothing
 
 instance FlowTyped TL.Text where
   isPrim  _ = True
-  flowType _ = Fix (Prim String)
+  flowType _ = FPrim String
   flowTypeName _ = Nothing
 
 instance {-# OVERLAPS #-} FlowTyped String where
   isPrim  _ = True
-  flowType _ = Fix (Prim String)
+  flowType _ = FPrim String
   flowTypeName _ = Nothing
 
 instance FlowTyped Void.Void where
   isPrim  _ = True
-  flowType _ = Fix (Prim Void)
+  flowType _ = FPrim Void
   flowTypeName _ = Nothing
 
 instance FlowTyped Char where
   isPrim  _ = True
-  flowType _ = Fix (Prim String)
+  flowType _ = FPrim String
   flowTypeName _ = Nothing
 
 instance FlowTyped Bool where
   isPrim  _ = True
-  flowType _ = Fix (Prim Boolean)
+  flowType _ = FPrim Boolean
   flowTypeName _ = Nothing
 
 instance FlowTyped A.Value where
   isPrim  _ = True
-  flowType _ = Fix (Prim Mixed)
+  flowType _ = FPrim Mixed
   flowTypeName _ = Nothing
 
 instance FlowTyped UTCTime where
   isPrim  _ = False
-  flowType _ = Fix (Prim String)
+  flowType _ = FPrim String
   flowTypeName _ = Nothing
 
 instance Typeable a => FlowTyped (Fixed a) where
   isPrim  _ = False
-  flowType _ = Fix (Prim Number)
+  flowType _ = FPrim Number
   flowTypeName _ = Nothing
 
 -- | This is at odds with "aeson" which defines 'A.ToJSONKey'
 instance (Typeable a, FlowTyped a) => FlowTyped (HashMap Text a) where
   -- XXX this is getting quite incoherent, what makes something "Prim" or not...
   isPrim _ = True
-  flowType _ = Fix (ObjectMap "key" (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FObjectMap "key" (FPrim String) (flowTypePreferName (Proxy :: Proxy a))
   flowTypeName _ = Nothing
 
 instance (Typeable a, FlowTyped a) => FlowTyped (Set.Set a) where
   isPrim _ = False
-  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
   flowTypeName _ = Nothing
 
 instance FlowTyped IntSet.IntSet where
   isPrim _ = False
-  flowType _ = Fix (Array (Fix (Prim Number)))
+  flowType _ = FArray (Fix (Prim Number))
   flowTypeName _ = Nothing
 
 instance (Typeable a, FlowTyped a) => FlowTyped (I.IntMap a) where
@@ -824,32 +894,31 @@ instance (Typeable a, FlowTyped a) => FlowTyped (I.IntMap a) where
 
 instance (Typeable a, FlowTyped a) => FlowTyped (HashSet.HashSet a) where
   isPrim _ = False
-  flowType _ = Fix (Array (flowTypePreferName (Proxy :: Proxy a)))
+  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
   flowTypeName _ = Nothing
 
 data Var :: k -> Type where Var :: Var a
 
 instance (Typeable a, Typeable k) => FlowTyped (Var (a :: k)) where
   isPrim _ = False
-  flowType _ = Fix (PolyVar (typeOf (Var :: Var a)))
+  flowType _ = FPolyVar (typeOf (Var :: Var a))
   flowTypeName _ = Nothing
 
 -- | This instance is defined recursively. You'll probably need to use
 -- 'dependencies' to extract a usable definition
 instance (FlowTyped a, Typeable a) => FlowTyped (Tree.Tree a) where
   isPrim _ = False
-  flowType _ = Fix (Tuple
-                    (V.fromList
-                     [ Fix (PolyUse (Flowable (Proxy :: Proxy a)))
-                     , Fix (Array
-                            (fromJust (flowTypeRecur (Proxy :: Proxy (Tree.Tree a)))))
-                     ]))
+  flowType _ = FTuple
+    (V.fromList
+     [ FPolyUse (Flowable (Proxy :: Proxy a))
+     , FArray (fromJust (flowTypeRecur (Proxy :: Proxy (Tree.Tree a))))
+     ])
   flowTypeName _ = Just "Tree"
   flowTypeVars _ = [typeRep (Var :: Var a)]
 
 instance FlowTyped () where
   isPrim _ = False
-  flowType _ = Fix (Tuple V.empty)
+  flowType _ = FTuple V.empty
   flowTypeName _ = Nothing
 
 -- monomorphic numeric instances
@@ -858,7 +927,7 @@ $(concat <$> mapM
      [d|
       instance FlowTyped $ty where
         isPrim  _ = False
-        flowType _ = Fix (Prim Number)
+        flowType _ = FPrim Number
         flowTypeName _ = Nothing |])
   [ [t|Int|], [t|Int8|], [t|Int16|], [t|Int32|], [t|Int64|]
   , [t|Word|], [t|Word8|], [t|Word16|], [t|Word32|], [t|Word64|]
