@@ -27,9 +27,10 @@
 module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
-  , Fix (..)
   , FlowTypeF
   , FlowType
+  -- , Fix (..)
+  , Var (..)
   , pattern FObject
   , pattern FExactObject
   , pattern FObjectMap
@@ -38,6 +39,12 @@ module Data.Aeson.Flow
   , pattern FFun
   , pattern FAlt
   , pattern FPrim
+  , pattern FPrimBoolean
+  , pattern FPrimNumber
+  , pattern FPrimString
+  , pattern FPrimVoid
+  , pattern FPrimMixed
+  , pattern FPrimAny
   , pattern FNullable
   , pattern FOmitable
   , pattern FLiteral
@@ -47,7 +54,6 @@ module Data.Aeson.Flow
   , pattern FPolyVar
   , pattern FPolyUse
   , pattern FPolyApply
-
     -- * Code generation
     -- ** Wholesale ES6/flow modules
   , FlowModuleOptions (..)
@@ -57,21 +63,22 @@ module Data.Aeson.Flow
   , writeFlowModule
   , exportFlowTypeAs
   , flowTypeAs
+  , FlowTyFields (..)
+  , FlowDeconstructField
+{-
     -- * Utility functions
   , showFlowType
   , dependencies
   , exportsDependencies
-  , FlowTyFields (..)
-  , DeconstructField
     -- * Internals
   , defaultFlowType
   , defaultFlowTypeName
   , FlowName (..)
   , PrimType (..)
   , GFlowTyped
-  , FlowTypeI
-  , Info (..)
-  , Var (..)
+  , GFlowTypeI
+  , GFlowInfo (..)
+-}
   , Typeable
   , typeRep
   ) where
@@ -215,6 +222,24 @@ pattern FAlt a b = Fix (Alt a b)
 pattern FPrim :: PrimType -> FlowType
 pattern FPrim a = Fix (Prim a)
 
+pattern FPrimBoolean :: FlowType
+pattern FPrimBoolean = FPrim Boolean
+
+pattern FPrimNumber :: FlowType
+pattern FPrimNumber = FPrim Number
+
+pattern FPrimString :: FlowType
+pattern FPrimString = FPrim String
+
+pattern FPrimVoid :: FlowType
+pattern FPrimVoid = FPrim Void
+
+pattern FPrimMixed :: FlowType
+pattern FPrimMixed = FPrim Mixed
+
+pattern FPrimAny :: FlowType
+pattern FPrimAny = FPrim Any
+
 pattern FNullable :: FlowType -> FlowType
 pattern FNullable a = Fix (Nullable a)
 
@@ -248,17 +273,17 @@ instance Show1 FlowTypeF where
   liftShowsPrec sp sl i a =
     liftShowsPrec sp sl i (reify sp (\p -> Showy (fmap (inj p) a)))
 
-data Info a = Constr !Text FlowTypeI a | NoInfo a
+data GFlowInfo a = Constr !Text GFlowTypeI a | NoInfo a
   deriving (Show, Functor, Traversable, Foldable)
 
-instance Show1 (Showy Info) where
+instance Show1 (Showy GFlowInfo) where
   liftShowsPrec _ _ i (Showy a) = showsPrec i a
 
-instance Show1 Info where
+instance Show1 GFlowInfo where
   liftShowsPrec sp sl i a =
     liftShowsPrec sp sl i (reify sp (\p -> Showy (fmap (inj p) a)))
 
-type FlowTypeI = Fix (Info `Compose` FlowTypeF)
+type GFlowTypeI = Fix (GFlowInfo `Compose` FlowTypeF)
 
 type FlowType = Fix FlowTypeF
 
@@ -540,8 +565,8 @@ class FlowTyped a where
 
 --------------------------------------------------------------------------------
 
-type family DeconstructField (k :: t) :: (Symbol, Type)
-type instance DeconstructField '(a, b) = '(a, b)
+type family FlowDeconstructField (k :: t) :: (Symbol, Type)
+type instance FlowDeconstructField '(a, b) = '(a, b)
 
 -- | Useful for declaring flowtypes from type-level key/value sets, like
 --
@@ -557,7 +582,7 @@ class ReifyFlowTyFields a where
 instance ReifyFlowTyFields '[] where
   reifyFlowTyFields _ = id
 
-instance ( DeconstructField x ~ '(k, v)
+instance ( FlowDeconstructField x ~ '(k, v)
          , KnownSymbol k
          , FlowTyped v
          , ReifyFlowTyFields xs
@@ -580,13 +605,13 @@ class GFlowTyped g where
   gflowType :: Options -> Proxy (g x) -> FlowType
 
 class GFlowVal g where
-  gflowVal :: Options -> Proxy (g x) -> FlowTypeI
+  gflowVal :: Options -> Proxy (g x) -> GFlowTypeI
 
 instance (KnownSymbol name, GFlowVal c) =>
          GFlowTyped (D1 ('MetaData name mod pkg t) c) where
   gflowType opt _ = runFlowI (postprocess (gflowVal opt (Proxy :: Proxy (c x))))
     where
-      postprocess :: FlowTypeI -> FlowTypeI
+      postprocess :: GFlowTypeI -> GFlowTypeI
       postprocess i
 #if MIN_VERSION_aeson(1,2,0)
         | not (tagSingleConstructors opt), Just o <- removeSingleConstructorTag i =
@@ -599,7 +624,7 @@ instance (KnownSymbol name, GFlowVal c) =>
         | otherwise = i
         where
 #if MIN_VERSION_aeson(1,2,0)
-          removeSingleConstructorTag :: FlowTypeI -> Maybe FlowTypeI
+          removeSingleConstructorTag :: GFlowTypeI -> Maybe GFlowTypeI
           removeSingleConstructorTag (FC (Info (ExactObject hm))) =
             case sumEncoding opt of
               TaggedObject tfn _ ->
@@ -611,7 +636,7 @@ instance (KnownSymbol name, GFlowVal c) =>
 #endif
 
           -- no-field constructors have a "contents" field of Prim Void
-          isNullary :: FlowTypeI -> Bool
+          isNullary :: GFlowTypeI -> Bool
           isNullary (FC (Info (Prim Void))) = True
           isNullary _                       = False
 
@@ -620,7 +645,7 @@ instance (KnownSymbol name, GFlowVal c) =>
           --
           -- XXX: this should preserve the order in which they are declared
           -- ... but does it?
-          go :: [Text] -> FlowTypeI -> Maybe [Text]
+          go :: [Text] -> GFlowTypeI -> Maybe [Text]
           go alts (FC (Constr name h _)) = (name:alts) <$ guard (isNullary h)
           go alts (FC (NoInfo (Alt a b))) =
             case (a, b) of
@@ -640,7 +665,7 @@ instance (KnownSymbol name, GFlowVal c) =>
           go _ _ =
             Nothing
 
-      runFlowI :: FlowTypeI -> FlowType
+      runFlowI :: GFlowTypeI -> FlowType
       runFlowI = cata $ \(Compose i) -> case i of
         Constr _name _t a -> Fix a
         NoInfo a          -> Fix a
@@ -661,17 +686,17 @@ gfieldName :: forall name su ss ds r x.
 gfieldName opt _ =
   T.pack (fieldLabelModifier opt (symbolVal (Proxy :: Proxy name)))
 
-noInfo :: f (Fix (Compose Info f)) -> Fix (Compose Info f)
+noInfo :: f (Fix (Compose GFlowInfo f)) -> Fix (Compose GFlowInfo f)
 noInfo = Fix . Compose . NoInfo
 
-infoConstr :: Text -> FlowTypeI -> f (Fix (Compose Info f)) -> Fix (Compose Info f)
+infoConstr :: Text -> GFlowTypeI -> f (Fix (Compose GFlowInfo f)) -> Fix (Compose GFlowInfo f)
 infoConstr tag nxt = Fix . Compose . Constr tag nxt
 
-discardInfo :: Info a -> a
+discardInfo :: GFlowInfo a -> a
 discardInfo (NoInfo a)     = a
 discardInfo (Constr _ _ a) = a
 
-pattern Info :: a -> Info a
+pattern Info :: a -> GFlowInfo a
 pattern Info a <- (discardInfo -> a)
   where Info = NoInfo
 

@@ -1,9 +1,3 @@
--- This file has been generated from package.yaml by hpack version 0.21.2.
---
--- see: https://github.com/sol/hpack
---
--- hash: ced57bbef6c7c2c16210827ed529eb13b29c0f96c697b5f095bbaa761b9077d8
-
 name:           aeson-flowtyped
 version:        0.9.1
 synopsis:       Create Flow type definitions from Haskell data types.
@@ -27,7 +21,7 @@ library
       src
   build-depends:
       aeson >=0.8
-    , base >=4.9 && <4.11
+    , base >=4.9 && <4.13
     , containers
     , free
     , recursion-schemes
@@ -55,7 +49,7 @@ test-suite aeson-flowtyped
   build-depends:
       aeson >=0.8
     , aeson-flowtyped
-    , base >=4.9 && <4.11
+    , base >=4.9 && <4.13
     , containers
     , recursion-schemes
     , tasty
