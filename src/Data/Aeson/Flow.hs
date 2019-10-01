@@ -59,12 +59,17 @@ module Data.Aeson.Flow
   , Export (..)
   , RenderOptions (..)
   , ModuleOptions (..)
+  , typeScriptModuleOptions
+  , flowModuleOptions
   , generateModule
   , writeModule
   , showTypeAs
   , exportTypeAs
-  , typeScriptModuleOptions
-  , flowModuleOptions
+    -- ** TS specific
+  , showTypeScriptType
+    -- ** Flow specific
+  , showFlowType
+    -- * Utility
   , FlowTyFields (..)
   , FlowDeconstructField
 {-
