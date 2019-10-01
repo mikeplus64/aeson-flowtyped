@@ -58,6 +58,7 @@ module Data.Aeson.Flow
     -- ** Wholesale ES6/flow modules
   , Export (..)
   , RenderOptions (..)
+  , ModuleOptions (..)
   , generateModule
   , writeModule
   , showTypeAs
