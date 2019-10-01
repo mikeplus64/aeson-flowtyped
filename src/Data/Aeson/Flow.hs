@@ -56,18 +56,20 @@ module Data.Aeson.Flow
   , pattern FPolyApply
     -- * Code generation
     -- ** Wholesale ES6/flow modules
-  , FlowModuleOptions (..)
-  , defaultFlowModuleOptions
   , Export (..)
-  , generateFlowModule
-  , writeFlowModule
-  , exportFlowTypeAs
-  , flowTypeAs
+  , RenderOptions (..)
+  , generateModule
+  , writeModule
+  , showTypeAs
+  , exportTypeAs
+  , typeScriptModuleOptions
+  , flowModuleOptions
   , FlowTyFields (..)
   , FlowDeconstructField
 {-
     -- * Utility functions
   , showFlowType
+  , showTypeScriptType
   , dependencies
   , exportsDependencies
     -- * Internals
@@ -83,7 +85,8 @@ module Data.Aeson.Flow
   , typeRep
   ) where
 import           Control.Monad
-import           Control.Monad.Trans.State.Strict
+import           Control.Monad.State.Strict
+import           Control.Monad.Reader
 import qualified Data.Aeson                       as A
 import           Data.Aeson.Types                 (Options (..),
                                                    SumEncoding (..))
@@ -139,13 +142,22 @@ instance Show1 (Showy FlowTypeF) where
 
 --------------------------------------------------------------------------------
 
+data RenderMode = RenderTypeScript | RenderFlow
+  deriving (Eq, Show)
+
+data RenderOptions = RenderOptions
+  { renderMode :: !RenderMode
+  } deriving (Eq, Show)
+
 -- | A primitive flow/javascript type
 data PrimType
   = Boolean
   | Number
   | String
-  | Void
-  | Mixed
+  | Null
+  | Undefined
+  | Bottom -- ^ uninhabited type; @never@ in typescript, and @empty@ in flow
+  | Mixed -- ^ @unknown@ in typescript, @mixed@ in flow
   | Any
   deriving (Show, Read, Eq, Ord)
 
@@ -172,7 +184,6 @@ instance Eq Flowable where
   Flowable a == Flowable b = typeRep a == typeRep b
 
 -- | The main AST for flowtypes.
-
 data FlowTypeF a
   = Object !(HashMap Text a)
   | ExactObject !(HashMap Text a)
@@ -183,7 +194,7 @@ data FlowTypeF a
   | Alt a a
   | Prim !PrimType
   | Nullable a
-  | Omitable a
+  | Omitable a -- ^ omitable when null or undefined
   | Literal !A.Value
   | Tag !Text
   | Name !FlowName
@@ -291,9 +302,9 @@ text :: Text -> PP.Doc
 text = PP.text . T.unpack
 
 squotes :: Text -> PP.Doc
-squotes = text . T.replace "'" "\\'"
+squotes = PP.squotes . text . T.replace "'" "\\'"
 
-type Poly = State (Map TypeRep Text)
+type Poly = ReaderT RenderOptions (State (Map TypeRep Text))
 
 ppAlts :: [FlowType] -> FlowType -> Poly PP.Doc
 ppAlts alts (Fix f) = case f of
@@ -346,8 +357,11 @@ ppObject = mapM ppField . H.toList
     ppField (name, fty) = do
       case fty of
         Fix (Omitable fty') ->
+          -- key?: type
           (\fty'' -> text name PP.<> PP.text "?" PP.<> PP.colon PP.<+> fty'') <$> pp fty'
+
         fty' ->
+          -- key: type
           (\fty'' -> text name PP.<> PP.colon PP.<+> fty'') <$> pp fty'
 
 getVar :: TypeRep -> Poly Text
@@ -364,7 +378,7 @@ polyVarNames =
   map T.singleton ['A'..'Z'] ++
   zipWith (\i t -> t `T.append` T.pack (show i)) [0 :: Int ..] polyVarNames
 
-pp :: FlowType -> Poly PP.Doc
+pp ::  FlowType -> Poly PP.Doc
 pp (Fix ft) = case ft of
   ObjectMap keyName keyType a ->
     (\r -> braceList
@@ -372,48 +386,101 @@ pp (Fix ft) = case ft of
         PP.colon PP.<+>
         r
       ]) <$> pp a
-  Object hm -> braceList <$> ppObject hm
-  ExactObject hm -> braceBarList <$> ppObject hm
-  Array a -> (\r -> mayWrap a r PP.<> PP.string "[]") <$> pp a
-  Tuple t -> PP.list <$> mapM pp (V.toList t)
-  Alt a b -> ppAlts [a] b
-  Prim pt -> return $ case pt of
-    Boolean -> PP.text "boolean"
-    Number  -> PP.text "number"
-    String  -> PP.text "string"
-    Void    -> PP.text "void"
-    Any     -> PP.text "any"
-    Mixed   -> PP.text "mixed"
-  Nullable a -> (\r -> PP.char '?' PP.<> mayWrap a r) <$> pp a
-  Omitable a -> (\r -> PP.char '?' PP.<> mayWrap a r) <$> pp a -- hopefully these are caught
-  Literal a -> return (ppJson a)
-  Tag t -> return (squotes t)
-  Name (FlowName _ t) -> return (text t)
-  PolyVar rep -> text <$> getVar rep
-  PolyUse (Flowable fp) -> pp (flowType fp)
+
+  Object hm ->
+    braceList <$> ppObject hm
+
+  ExactObject hm -> do
+    mode <- asks renderMode
+    case mode of
+      RenderFlow       -> braceBarList <$> ppObject hm
+      RenderTypeScript -> braceList <$> ppObject hm
+
+  -- x[]
+  Array a ->
+    (\r -> mayWrap a r PP.<> PP.string "[]") <$> pp a
+
+  -- [x, y, z]
+  Tuple t ->
+    PP.list <$> mapM pp (V.toList t)
+
+  Alt a b ->
+    ppAlts [a] b
+
+  Prim pt -> do
+    mode <- asks renderMode
+    return $ case pt of
+      Boolean   -> PP.text "boolean"
+      Number    -> PP.text "number"
+      String    -> PP.text "string"
+      Null      -> PP.text "null"
+      Undefined -> PP.text "undefined"
+      Any       -> PP.text "any"
+      Mixed     -> case mode of
+        RenderFlow       -> PP.text "mixed"
+        RenderTypeScript -> PP.text "unknown"
+      Bottom    -> case mode of
+        RenderFlow       -> PP.text "empty"
+        RenderTypeScript -> PP.text "never"
+
+  Nullable a ->
+    -- n.b. there is no 'undefined' in json. void is undefined | null in both ts
+    -- and flow (and ?x syntax for void|x)
+    (\a' -> PP.text "null" PP.<+> PP.string "|" PP.<+> a') <$> pp a
+
+  Omitable a ->
+    fail "must be caught by ppObject"
+
+  Literal a ->
+    return (ppJson a)
+
+  Tag t ->
+    return (squotes t)
+
+  Name (FlowName _ t) ->
+    return (text t)
+
+  PolyVar rep ->
+    text <$> getVar rep
+
+  PolyUse (Flowable fp) ->
+    pp (flowType fp)
+
   PolyApply a vars -> do
     n  <- pp a
     vs <- mapM pp vars
     return (n PP.<> PP.angles (PP.hsep (PP.punctuate PP.comma vs)))
-  _ -> return (PP.string (show ft))
+
+  _ ->
+    return (PP.string (show ft))
+
+-- | Pretty-print a flowtype in flowtype syntax
+renderTypeWithOptions :: RenderOptions -> FlowType -> (PP.Doc, Map TypeRep Text)
+renderTypeWithOptions opts ft = runState (pp ft `runReaderT` opts) M.empty
 
 -- | Pretty-print a flowtype in flowtype syntax
 showFlowType :: FlowType -> Text
-showFlowType ft = T.pack (show (evalState (pp ft) M.empty))
+showFlowType =
+  T.pack . show . fst . renderTypeWithOptions RenderOptions{renderMode=RenderFlow}
+
+-- | Pretty-print a flowtype in flowtype syntax
+showTypeScriptType :: FlowType -> Text
+showTypeScriptType =
+  T.pack . show . fst . renderTypeWithOptions RenderOptions{renderMode=RenderTypeScript}
 
 --------------------------------------------------------------------------------
 -- Module exporting
 
 -- | Generate a @ export type @ declaration.
-exportFlowTypeAs :: Text -> FlowType -> Text
-exportFlowTypeAs = flowTypeAs True
+exportTypeAs :: RenderOptions -> Text -> FlowType -> Text
+exportTypeAs opts = showTypeAs opts True
 
 -- | Generate a @ export type @ declaration.
-flowTypeAs :: Bool -> Text -> FlowType -> Text
-flowTypeAs isExport name ft =
+showTypeAs :: RenderOptions -> Bool -> Text -> FlowType -> Text
+showTypeAs opts isExport name ft =
   T.pack . render $
   PP.string (if isExport then "export type " else "type ") PP.<>
-  PP.string (T.unpack name) PP.<> withVars (runState (pp ft) M.empty)
+  PP.string (T.unpack name) PP.<> withVars (renderTypeWithOptions opts ft)
   where
     main r = PP.string "=" PP.<$> PP.indent 2 r PP.<> PP.string ";"
     withVars (r, vars)
@@ -426,10 +493,11 @@ flowTypeAs isExport name ft =
 
 -- | Compute all the dependencies of a 'FlowTyped' thing, including itself.
 dependencies :: (Typeable a, FlowTyped a) => Proxy a -> Set.Set FlowName
-dependencies p0 = M.foldlWithKey'
-                  (\acc k a -> Set.insert k (Set.union a acc))
-                  Set.empty
-                  (go p0 M.empty)
+dependencies p0 =
+  M.foldlWithKey'
+  (\acc k a -> Set.insert k (Set.union a acc))
+  Set.empty
+  (go p0 M.empty)
   where
     -- XXX: catch mutual recursion
     addImmediateDeps :: FlowName
@@ -455,26 +523,35 @@ immediateDeps :: FlowType -> Set.Set FlowName
 immediateDeps (Fix (Name n)) = Set.singleton n
 immediateDeps (Fix p)        = foldMap immediateDeps p
 
-data FlowModuleOptions = FlowModuleOptions
+data ModuleOptions = ModuleOptions
   { -- | You might want to change this to include e.g. flow-runtime
-    flowPragmas     :: [Text]
-  , flowHeader      :: [Text]
-  , flowExportDeps  :: Bool
-  , flowComputeDeps :: Bool
+    pragmas       :: [Text]
+  , header        :: [Text]
+  , exportDeps    :: Bool
+  , computeDeps   :: Bool
+  , renderOptions :: RenderOptions
   } deriving (Eq, Show)
 
-defaultFlowModuleOptions :: FlowModuleOptions
-defaultFlowModuleOptions = FlowModuleOptions
-  { flowPragmas = ["// @flow"]
-  , flowHeader = ["This module has been generated by aeson-flowtyped."]
-  , flowExportDeps = True
-  , flowComputeDeps = True
+flowModuleOptions :: ModuleOptions
+flowModuleOptions = ModuleOptions
+  { pragmas = ["// @flow"]
+  , header = ["This module has been generated by aeson-flowtyped."]
+  , exportDeps = True
+  , computeDeps = True
+  , renderOptions = RenderOptions{renderMode = RenderFlow}
+  }
+
+typeScriptModuleOptions :: ModuleOptions
+typeScriptModuleOptions = ModuleOptions
+  { pragmas = []
+  , header = ["This module has been generated by aeson-flowtyped."]
+  , exportDeps = True
+  , computeDeps = True
+  , renderOptions = RenderOptions{renderMode = RenderTypeScript}
   }
 
 data Export where
-  Export :: (Typeable a, FlowTyped a)
-         => Proxy a
-         -> Export
+  Export :: (Typeable a, FlowTyped a) => Proxy a -> Export
 
 instance Eq Export where
   Export p0 == Export p1 =
@@ -484,29 +561,29 @@ instance Eq Export where
 exportsDependencies :: [Export] -> Set.Set FlowName
 exportsDependencies = foldMap (\(Export a) -> dependencies a)
 
-generateFlowModule :: FlowModuleOptions -> [Export] -> Text
-generateFlowModule opts exports =
+generateModule :: ModuleOptions -> [Export] -> Text
+generateModule opts exports =
   T.unlines
   . (\m ->
-       (flowPragmas opts ++ map ("// " `T.append`) (flowHeader opts)) ++
+       (pragmas opts ++ map ("// " `T.append`) (header opts)) ++
        (T.empty : m))
   . map flowDecl
   . flowNames
   $ exports
   where
     flowNames =
-      if flowComputeDeps opts
+      if computeDeps opts
       then Set.toList . exportsDependencies
       else catMaybes . map (\(Export p) -> FlowName p <$> flowTypeName p)
 
     flowDecl (FlowName p name) =
-      if Export p `elem` exports || flowExportDeps opts
-      then flowTypeAs True name (flowType p)
-      else flowTypeAs False name (flowType p)
+      if Export p `elem` exports || exportDeps opts
+      then showTypeAs (renderOptions opts) True name (flowType p)
+      else showTypeAs (renderOptions opts) False name (flowType p)
 
-writeFlowModule :: FlowModuleOptions -> FilePath -> [Export] -> IO ()
-writeFlowModule opts path =
-  TIO.writeFile path . generateFlowModule opts
+writeModule :: ModuleOptions -> FilePath -> [Export] -> IO ()
+writeModule opts path =
+  TIO.writeFile path . generateModule opts
 
 --------------------------------------------------------------------------------
 
@@ -636,9 +713,13 @@ instance (KnownSymbol name, GFlowVal c) =>
 #endif
 
           -- no-field constructors have a "contents" field of Prim Void
-          isNullary :: GFlowTypeI -> Bool
-          isNullary (FC (Info (Prim Void))) = True
-          isNullary _                       = False
+          isNullary :: FlowTypeI -> Bool
+          isNullary (FC (Info (Prim a))) = case a of
+            Bottom    -> True
+            Null      -> True
+            Undefined -> True
+            _         -> False
+          isNullary _ = False
 
           -- try to detect if the type is a bunch of single-constructor
           -- alternatives
@@ -765,7 +846,7 @@ instance (GFlowVal a, GFlowVal b) => GFlowVal (a :*: b) where
       b@(Fix (Compose (Info fB))) = gflowVal opt (Proxy :: Proxy (b x))
 
 instance GFlowVal U1 where
-  gflowVal _ _ = noInfo (Prim Void)
+  gflowVal _ _ = noInfo (Prim Undefined)
 
 class GFlowRecord a where
   gflowRecordFields :: Options -> Proxy (a x) -> HashMap Text FlowType

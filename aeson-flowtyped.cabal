@@ -29,7 +29,7 @@ library
     , scientific
     , text
     , time
-    , transformers
+    , mtl
     , unordered-containers
     , vector
     , wl-pprint
