@@ -57,6 +57,7 @@ module Data.Aeson.Flow
     -- * Code generation
     -- ** Wholesale ES6/flow modules
   , Export (..)
+  , RenderMode (..)
   , RenderOptions (..)
   , ModuleOptions (..)
   , typeScriptModuleOptions
@@ -69,24 +70,13 @@ module Data.Aeson.Flow
   , showTypeScriptType
     -- ** Flow specific
   , showFlowType
+    -- * Dependencies
+  , exportsDependencies
+  , dependencies
     -- * Utility
+  , FlowName (..)
   , FlowTyFields (..)
   , FlowDeconstructField
-{-
-    -- * Utility functions
-  , showFlowType
-  , showTypeScriptType
-  , dependencies
-  , exportsDependencies
-    -- * Internals
-  , defaultFlowType
-  , defaultFlowTypeName
-  , FlowName (..)
-  , PrimType (..)
-  , GFlowTyped
-  , GFlowTypeI
-  , GFlowInfo (..)
--}
   , Typeable
   , typeRep
   ) where
@@ -96,6 +86,7 @@ import           Control.Monad.Reader
 import qualified Data.Aeson                       as A
 import           Data.Aeson.Types                 (Options (..),
                                                    SumEncoding (..))
+import           Data.Fix                         (Fix (..))
 import           Data.Fixed                       (Fixed)
 import           Data.Functor.Classes
 import           Data.Functor.Compose
@@ -435,7 +426,7 @@ pp (Fix ft) = case ft of
     (\a' -> PP.text "null" PP.<+> PP.string "|" PP.<+> a') <$> pp a
 
   Omitable a ->
-    fail "must be caught by ppObject"
+    error "XXX Data.Aeson.Flow this error should be impossible to encounter"
 
   Literal a ->
     return (ppJson a)
@@ -993,7 +984,7 @@ instance (Typeable a, FlowTyped a) => FlowTyped (Set.Set a) where
 
 instance FlowTyped IntSet.IntSet where
   isPrim _ = False
-  flowType _ = FArray (Fix (Prim Number))
+  flowType _ = FArray FPrimNumber -- (Fix (Prim Number))
   flowTypeName _ = Nothing
 
 instance (Typeable a, FlowTyped a) => FlowTyped (I.IntMap a) where
