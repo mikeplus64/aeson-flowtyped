@@ -971,11 +971,17 @@ instance Typeable a => FlowTyped (Fixed a) where
   flowTypeName _ = Nothing
 
 -- | This is at odds with "aeson" which defines 'A.ToJSONKey'
-instance (Typeable a, FlowTyped a) => FlowTyped (HashMap Text a) where
+instance (Typeable a, FlowTyped a, A.ToJSONKey k) => FlowTyped (HashMap k a) where
   -- XXX this is getting quite incoherent, what makes something "Prim" or not...
   isPrim _ = True
-  flowType _ = FObjectMap "key" (FPrim String) (flowTypePreferName (Proxy :: Proxy a))
-  flowTypeName _ = Nothing
+
+  flowType _ =
+    case A.toJSONKey :: A.ToJSONKeyFunction k of
+      A.ToJSONKeyText _ _ -> FObjectMap "key" (FPrim String) (flowTypePreferName (Proxy :: Proxy a))
+      A.ToJSONKeyValue _ _ -> FArray (FTuple (V.fromListN 2 [ flowType (Proxy :: Proxy k), flowType (Proxy :: Proxy a) ]))
+
+  flowTypeName _ =
+    Nothing
 
 instance (Typeable a, FlowTyped a) => FlowTyped (Set.Set a) where
   isPrim _ = False

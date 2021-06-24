@@ -1,5 +1,5 @@
 name:           aeson-flowtyped
-version:        0.10.0
+version:        0.10.1
 synopsis:       Create Flow type definitions from Haskell data types.
 description:    Create Flow type definitions from Haskell data types.
 category:       Web
