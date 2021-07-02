@@ -1,4 +1,9 @@
-{ nixpkgs ? import <nixpkgs> {}, haskellPackages ? nixpkgs.haskellPackages, extra ? {}, drv ? {} }:
+{
+  nixpkgs ? import <nixpkgs> {},
+  haskellPackages ? nixpkgs.haskellPackages,
+  extra ? {},
+  drv ? {}
+}:
 let
   path = ./.;
   name = builtins.baseNameOf path;
