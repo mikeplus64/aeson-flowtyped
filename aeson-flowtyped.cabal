@@ -1,5 +1,5 @@
 name:           aeson-flowtyped
-version:        0.10.1
+version:        0.11.0
 synopsis:       Create Flow type definitions from Haskell data types.
 description:    Create Flow type definitions from Haskell data types.
 category:       Web
@@ -21,7 +21,7 @@ library
       src
   build-depends:
       aeson >=0.8
-    , base >=4.9 && <4.15
+    , base
     , containers
     , data-fix
     , free
@@ -50,7 +50,7 @@ test-suite aeson-flowtyped
   build-depends:
       aeson >=0.8
     , aeson-flowtyped
-    , base >=4.9 && <4.15
+    , base
     , containers
     , data-fix
     , recursion-schemes
