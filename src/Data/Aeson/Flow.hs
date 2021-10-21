@@ -925,6 +925,36 @@ instance ( FlowTyped a, Typeable a
       bFt = flowTypePreferName (Proxy :: Proxy b)
       cFt = flowTypePreferName (Proxy :: Proxy c)
 
+instance ( FlowTyped a, Typeable a
+         , FlowTyped b, Typeable b
+         , FlowTyped c, Typeable c
+         , FlowTyped d, Typeable d
+         ) =>
+         FlowTyped (a, b, c, d) where
+  flowTypeName _ = Nothing
+  flowType _ = FTuple (V.fromList [aFt, bFt, cFt, dFt])
+    where
+      aFt = flowTypePreferName (Proxy :: Proxy a)
+      bFt = flowTypePreferName (Proxy :: Proxy b)
+      cFt = flowTypePreferName (Proxy :: Proxy c)
+      dFt = flowTypePreferName (Proxy :: Proxy d)
+
+instance ( FlowTyped a, Typeable a
+         , FlowTyped b, Typeable b
+         , FlowTyped c, Typeable c
+         , FlowTyped d, Typeable d
+         , FlowTyped e, Typeable e
+         ) =>
+         FlowTyped (a, b, c, d, e) where
+  flowTypeName _ = Nothing
+  flowType _ = FTuple (V.fromList [aFt, bFt, cFt, dFt, eFt])
+    where
+      aFt = flowTypePreferName (Proxy :: Proxy a)
+      bFt = flowTypePreferName (Proxy :: Proxy b)
+      cFt = flowTypePreferName (Proxy :: Proxy c)
+      dFt = flowTypePreferName (Proxy :: Proxy d)
+      eFt = flowTypePreferName (Proxy :: Proxy e)
+
 instance FlowTyped Text where
   isPrim  _ = True
   flowType _ = FPrimString
