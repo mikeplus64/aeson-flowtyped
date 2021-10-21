@@ -483,6 +483,7 @@ showTypeAs opts isExport name ft =
   T.pack . render $
   PP.string (if isExport then "export type " else "type ") PP.<>
   PP.string (T.unpack name) PP.<> withVars (renderTypeWithOptions opts ft)
+  PP.<> PP.linebreak
   where
     main r = PP.string "=" PP.<$> PP.indent 2 r PP.<> PP.string ";"
     withVars (r, vars)
