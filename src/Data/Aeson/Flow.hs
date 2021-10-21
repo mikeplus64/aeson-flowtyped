@@ -5,6 +5,7 @@
 {-# LANGUAGE DeriveFoldable            #-}
 {-# LANGUAGE DeriveFunctor             #-}
 {-# LANGUAGE DeriveTraversable         #-}
+{-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -86,6 +87,7 @@ import           Control.Monad.Reader
 import qualified Data.Aeson                       as A
 import           Data.Aeson.Types                 (Options (..),
                                                    SumEncoding (..))
+import           Data.Eq.Deriving                 (deriveEq1)
 import           Data.Fix                         (Fix (..))
 import           Data.Fixed                       (Fixed)
 import           Data.Functor.Classes
@@ -122,63 +124,6 @@ import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen          as PP
 
---------------------------------------------------------------------------------
--- Magical newtype for injecting showsPrec into any arbitrary Show
-
-inj :: Proxy s -> a -> Inj s a
-inj _ = Inj
-
-newtype Inj s a = Inj a
--- needs UndecidableInstances
-instance Reifies s (Int -> a -> ShowS) => Show (Inj s a) where
-  showsPrec i (Inj a) = reflect (Proxy :: Proxy s) i a
-
-data Showy f a = forall s. Reifies s (Int -> a -> ShowS) => Showy (f (Inj s a))
-instance Show1 (Showy FlowTypeF) where
-  liftShowsPrec _ _ i (Showy a) = showsPrec i a
-
---------------------------------------------------------------------------------
-
-data RenderMode = RenderTypeScript | RenderFlow
-  deriving (Eq, Show)
-
-data RenderOptions = RenderOptions
-  { renderMode :: !RenderMode
-  } deriving (Eq, Show)
-
--- | A primitive flow/javascript type
-data PrimType
-  = Boolean
-  | Number
-  | String
-  | Null
-  | Undefined
-  | Bottom -- ^ uninhabited type; @never@ in typescript, and @empty@ in flow
-  | Mixed -- ^ @unknown@ in typescript, @mixed@ in flow
-  | Any
-  deriving (Show, Read, Eq, Ord)
-
--- | A name for a flowtyped data-type. These are returned by 'dependencies'.
-data FlowName where
-  FlowName :: (Typeable a, FlowTyped a) => Proxy a -> Text -> FlowName
-
-instance Show FlowName where
-  show (FlowName _ t) = show t
-
-instance Eq FlowName where
-  FlowName _ n0 == FlowName _ n1 = n0 == n1
-
-instance Ord FlowName where
-  FlowName _ n0 `compare` FlowName _ n1 = compare n0 n1
-
-data Flowable where
-  Flowable :: (Typeable a, FlowTyped a) => Proxy a -> Flowable
-
-instance Show Flowable where
-  show (Flowable t) = show (typeRep t)
-
-instance Eq Flowable where
-  Flowable a == Flowable b = typeRep a == typeRep b
 
 -- | The main AST for flowtypes.
 data FlowTypeF a
@@ -200,6 +145,66 @@ data FlowTypeF a
   | PolyUse !Flowable
   | PolyApply a [a]
   deriving (Show, Eq, Functor, Traversable, Foldable)
+
+-- | A primitive flow/javascript type
+data PrimType
+  = Boolean
+  | Number
+  | String
+  | Null
+  | Undefined
+  | Bottom -- ^ uninhabited type; @never@ in typescript, and @empty@ in flow
+  | Mixed -- ^ @unknown@ in typescript, @mixed@ in flow
+  | Any
+  deriving (Show, Read, Eq, Ord)
+
+-- | A name for a flowtyped data-type. These are returned by 'dependencies'.
+data FlowName where
+  FlowName :: (Typeable a, FlowTyped a) => Proxy a -> Text -> FlowName
+
+data Flowable where
+  Flowable :: (Typeable a, FlowTyped a) => Proxy a -> Flowable
+
+data Showy f a = forall s. Reifies s (Int -> a -> ShowS) => Showy (f (Inj s a))
+instance Show1 (Showy FlowTypeF) where
+  liftShowsPrec _ _ i (Showy a) = showsPrec i a
+
+
+--------------------------------------------------------------------------------
+-- Magical newtype for injecting showsPrec into any arbitrary Show
+
+inj :: Proxy s -> a -> Inj s a
+inj _ = Inj
+
+newtype Inj s a = Inj a
+-- needs UndecidableInstances
+
+instance Reifies s (Int -> a -> ShowS) => Show (Inj s a) where
+  showsPrec i (Inj a) = reflect (Proxy :: Proxy s) i a
+
+--------------------------------------------------------------------------------
+
+data RenderMode = RenderTypeScript | RenderFlow
+  deriving (Eq, Show)
+
+data RenderOptions = RenderOptions
+  { renderMode :: !RenderMode
+  } deriving (Eq, Show)
+
+instance Show FlowName where
+  show (FlowName _ t) = show t
+
+instance Eq FlowName where
+  FlowName _ n0 == FlowName _ n1 = n0 == n1
+
+instance Ord FlowName where
+  FlowName _ n0 `compare` FlowName _ n1 = compare n0 n1
+
+instance Show Flowable where
+  show (Flowable t) = show (typeRep t)
+
+instance Eq Flowable where
+  Flowable a == Flowable b = typeRep a == typeRep b
 
 -- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix
 -- FlowTypeF and related types
@@ -472,7 +477,7 @@ showTypeScriptType =
 exportTypeAs :: RenderOptions -> Text -> FlowType -> Text
 exportTypeAs opts = showTypeAs opts True
 
--- | Generate a @ export type @ declaration.
+-- | Generate a @ type @ declaration, possibly an export.
 showTypeAs :: RenderOptions -> Bool -> Text -> FlowType -> Text
 showTypeAs opts isExport name ft =
   T.pack . render $
@@ -549,29 +554,40 @@ typeScriptModuleOptions = ModuleOptions
 
 data Export where
   Export :: (Typeable a, FlowTyped a) => Proxy a -> Export
+  RawExport :: Text -> FlowType -> Export
 
 instance Eq Export where
   Export p0 == Export p1 =
     flowTypeName p0 == flowTypeName p1 ||
     typeRep p0 == typeRep p1
+  RawExport n0 t0 == RawExport n1 t1 = n0 == n1 && t0 == t1
 
 exportsDependencies :: [Export] -> Set.Set FlowName
-exportsDependencies = foldMap (\(Export a) -> dependencies a)
+exportsDependencies = foldMap $ \e -> case e of
+  Export a -> dependencies a
+  RawExport _ _ -> mempty
 
 generateModule :: ModuleOptions -> [Export] -> Text
-generateModule opts exports =
-  T.unlines
-  . (\m ->
-       (pragmas opts ++ map ("// " `T.append`) (header opts)) ++
-       (T.empty : m))
-  . map flowDecl
-  . flowNames
-  $ exports
+generateModule opts exports = T.unlines $
+  ((\m -> (pragmas opts ++ map ("// " `T.append`) (header opts)) ++
+          (T.empty : m))
+    . map flowDecl
+    . flowNames
+    $ exports) ++
+  rawExports
   where
+    rawExports = catMaybes $ map
+      (\ex -> case ex of
+        RawExport t n -> Just (showTypeAs (renderOptions opts) True t n)
+        Export _ -> Nothing)
+      exports
+
     flowNames =
       if computeDeps opts
       then Set.toList . exportsDependencies
-      else catMaybes . map (\(Export p) -> FlowName p <$> flowTypeName p)
+      else catMaybes . map (\ex -> case ex of
+                               Export p -> FlowName p <$> flowTypeName p
+                               _ -> Nothing)
 
     flowDecl (FlowName p name) =
       if Export p `elem` exports || exportDeps opts
@@ -1076,3 +1092,5 @@ $(concat <$> mapM
   , [t|Word|], [t|Word8|], [t|Word16|], [t|Word32|], [t|Word64|]
   , [t|Float|], [t|Double|], [t|Scientific|]
   ])
+
+deriveEq1 ''FlowTypeF

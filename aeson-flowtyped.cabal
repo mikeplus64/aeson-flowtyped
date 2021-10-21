@@ -24,6 +24,7 @@ library
     , base
     , containers
     , data-fix
+    , deriving-compat
     , free
     , recursion-schemes
     , reflection
