@@ -455,7 +455,7 @@ pp (Fix ft) = case ft of
     text <$> getVar rep
 
   PolyUse (Flowable fp) ->
-    pp (flowType fp)
+    pp (flowTypePreferName fp)
 
   PolyApply a vars -> do
     n  <- pp a
@@ -844,7 +844,8 @@ instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
   gflowVal opt p = gflowVal opt (fmap unM1 p)
 
 instance (Typeable r, FlowTyped r) => GFlowVal (Rec0 r) where
-  gflowVal _opt p = cata noInfo (flowTypePreferName (fmap unK1 p))
+  gflowVal _opt (p :: r' x) =
+    cata noInfo (flowTypePreferName (fmap unK1 p))
 
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
   gflowVal opt _ = noInfo
@@ -1027,9 +1028,10 @@ instance (Typeable a, Typeable k, FlowTyped a, FlowTyped k, A.ToJSONKey k) => Fl
 
   flowType _ =
     case A.toJSONKey :: A.ToJSONKeyFunction k of
-      A.ToJSONKeyText _ _ ->
-        FObjectMap "key" (FPrim String) (flowTypePreferName (Proxy :: Proxy a))
-      A.ToJSONKeyValue _ _ ->
+      A.ToJSONKeyText{} ->
+        FObjectMap "key" FPrimString (flowTypePreferName (Proxy :: Proxy a))
+
+      A.ToJSONKeyValue{} ->
         FArray (FTuple (V.fromListN 2
                         [ flowTypePreferName (Proxy :: Proxy k)
                         , flowTypePreferName (Proxy :: Proxy a)
@@ -1051,8 +1053,8 @@ instance FlowTyped IntSet.IntSet where
 instance (Typeable a, FlowTyped a) => FlowTyped (I.IntMap a) where
   isPrim _ = False
   flowType _ = Fix . Array . Fix . Tuple . V.fromListN 2 $
-    [ flowType (Proxy :: Proxy Int)
-    , flowType (Proxy :: Proxy a)
+    [ FPrimNumber
+    , flowTypePreferName (Proxy :: Proxy a)
     ]
   flowTypeName _ = Nothing
 
@@ -1091,7 +1093,7 @@ $(concat <$> mapM
      [d|
       instance FlowTyped $ty where
         isPrim  _ = False
-        flowType _ = FPrim Number
+        flowType _ = FPrimNumber
         flowTypeName _ = Nothing |])
   [ [t|Int|], [t|Int8|], [t|Int16|], [t|Int32|], [t|Int64|]
   , [t|Word|], [t|Word8|], [t|Word16|], [t|Word32|], [t|Word64|]
