@@ -28,6 +28,7 @@
 module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
+  , flowTypePreferName
   , FlowTypeF
   , FlowType
   -- , Fix (..)
