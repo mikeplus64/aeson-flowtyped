@@ -616,10 +616,21 @@ defaultFlowTypeName
   :: (Generic a, Rep a ~ D1 ('MetaData name mod pkg t) c, KnownSymbol name)
   => Proxy a
   -> Maybe Text
-defaultFlowTypeName p = Just (T.pack (symbolVal (pGetName (fmap from p))))
+defaultFlowTypeName p
+  = Just
+  . cleanup
+  . T.pack
+  . symbolVal
+  . pGetName
+  . fmap from
+  $ p
   where
     pGetName :: Proxy (D1 ('MetaData name mod pkg t) c x) -> Proxy name
     pGetName _ = Proxy
+
+    cleanup = T.replace "'" "_" -- I think this is the only illegal token in JS
+                                -- that's allowed in Haskell, other than type
+                                -- operators... TODO, rename type operators
 
 flowTypePreferName :: (Typeable a, FlowTyped a) => Proxy a -> FlowType
 flowTypePreferName p = fromMaybe (flowType p) (flowTypeRecur p)
