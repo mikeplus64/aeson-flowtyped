@@ -100,6 +100,7 @@ import           Data.Int
 import qualified Data.IntMap.Strict               as I
 import qualified Data.IntSet                      as IntSet
 import           Data.Kind                        (Type)
+import           Data.List                        (foldl')
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as M
 import           Data.Maybe
@@ -123,7 +124,7 @@ import           Data.Word
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen          as PP
-
+import qualified Type.Reflection                  as TR
 
 -- | The main AST for flowtypes.
 data FlowTypeF a
@@ -195,16 +196,24 @@ instance Show FlowName where
   show (FlowName _ t) = show t
 
 instance Eq FlowName where
-  FlowName _ n0 == FlowName _ n1 = n0 == n1
+  FlowName (t0 :: Proxy t0) n0 == FlowName (t1 :: Proxy t1) n1 =
+    case eqT :: Maybe (t0 :~: t1) of
+      Just Refl -> (t0, n0) == (t1, n1)
+      Nothing -> False
 
 instance Ord FlowName where
-  FlowName _ n0 `compare` FlowName _ n1 = compare n0 n1
+  FlowName t0 n0 `compare` FlowName t1 n1 = n0 `compare` n1
+  -- XXX this breaks using (typeRep t0, n0) `compare` (typeRep t1, n1) for some
+  -- reason... dunno why
 
 instance Show Flowable where
   show (Flowable t) = show (typeRep t)
 
 instance Eq Flowable where
   Flowable a == Flowable b = typeRep a == typeRep b
+
+instance Ord Flowable where
+  Flowable a `compare` Flowable b = typeRep a `compare` typeRep b
 
 -- XXX: vector >= 0.12 has Eq1 vector which allows us to use eq for Fix
 -- FlowTypeF and related types
@@ -497,34 +506,29 @@ showTypeAs opts isExport name ft =
 -- | Compute all the dependencies of a 'FlowTyped' thing, including itself.
 dependencies :: (Typeable a, FlowTyped a) => Proxy a -> Set.Set FlowName
 dependencies p0 =
-  M.foldlWithKey'
-  (\acc k a -> Set.insert k (Set.union a acc))
-  Set.empty
-  (go p0 M.empty)
+  (case flowTypeName p0 of
+     Just t -> Set.insert (FlowName p0 t)
+     Nothing -> id)
+  (M.foldl' Set.union Set.empty (transitiveDeps (Flowable p0) M.empty))
   where
-    -- XXX: catch mutual recursion
-    addImmediateDeps :: FlowName
-                     -> Map FlowName (Set.Set FlowName)
-                     -> Map FlowName (Set.Set FlowName)
-    addImmediateDeps fn@(FlowName p _) acc0 =
-      foldr
-      (\(FlowName p _) -> go p)
-      (M.insert fn sub acc0)
-      sub
-      where sub = immediateDeps (flowType p)
+    flowNameToFlowable (FlowName fn _) = Flowable fn
 
-    go :: (FlowTyped a, Typeable a)
-       => Proxy a
-       -> Map FlowName (Set.Set FlowName)
-       -> Map FlowName (Set.Set FlowName)
-    go p acc =
-      case FlowName p <$> flowTypeName p of
-        Just fn | fn `M.notMember` acc -> addImmediateDeps fn acc
-        _                              -> acc
+    immediateDeps :: FlowType -> Set.Set FlowName
+    immediateDeps (FName n) = Set.singleton n
+    immediateDeps (Fix p)   = foldMap immediateDeps p
 
-immediateDeps :: FlowType -> Set.Set FlowName
-immediateDeps (Fix (Name n)) = Set.singleton n
-immediateDeps (Fix p)        = foldMap immediateDeps p
+    transitiveDeps
+      :: Flowable
+      -> M.Map Flowable (Set.Set FlowName)
+      -> M.Map Flowable (Set.Set FlowName)
+    transitiveDeps fpf@(Flowable p) acc
+      | fpf `M.notMember` acc =
+          let
+            imms = immediateDeps (flowType p)
+            withThis = M.insert fpf imms acc
+          in
+            Set.foldr' (\x xs -> transitiveDeps (flowNameToFlowable x) xs) withThis imms
+      | otherwise = acc
 
 data ModuleOptions = ModuleOptions
   { -- | You might want to change this to include e.g. flow-runtime
