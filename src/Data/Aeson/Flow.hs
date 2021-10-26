@@ -452,7 +452,9 @@ pp (Fix ft) = case ft of
   Tag t ->
     return (squotes t)
 
-  GenericParam ix -> do
+  GenericParam ix ->
+    return (text (polyVarNames !! ix))
+    {-
     opts <- ask
     params <- lift ask
     let ft | ix < length params = case params !! ix of
@@ -460,6 +462,7 @@ pp (Fix ft) = case ft of
            | otherwise = FPrimNever
     let r = runReaderT (pp ft) opts `runReader` []
     return r
+    -}
 
   CallType (FlowName _ t) [] ->
     return (text t)
@@ -645,12 +648,9 @@ callType' p args = case flowTypeName p of
     vars = flowTypeVars p
 
 callType :: forall a. FlowCallable a => Proxy a -> FlowType
-callType p = callType' p
-  (map (\(Flowable t) -> callType t)
-  (reflTyParams @(TyParams a)))
+callType p = callType' p (map (\(Flowable t) -> callType t) (flowTypeVars p))
 
-class (ReflTyParams (TyParams a), Typeable a, FlowTyped a) => FlowCallable a
-instance (ReflTyParams (TyParams a), Typeable a, FlowTyped a) => FlowCallable a
+type FlowCallable a = (Typeable a, FlowTyped a)
 
 class FlowTyped a where
   flowType :: Proxy a -> FlowType
@@ -677,25 +677,6 @@ class FlowTyped a where
 data Param (p :: Nat) = Param
 
 --------------------------------------------------------------------------------
-
-type family NumTyParams_ (k :: t) (acc :: Nat) :: Nat where
-  NumTyParams_ (f x) acc = NumTyParams_ f (1 + acc)
-  NumTyParams_ _t acc = acc
-type NumTyParams t = NumTyParams_ t 0
-
-type family TyParams_ (t :: k) (xs :: [Type]):: [Type] where
-  TyParams_ (f x) xs = TyParams_ f (x ': xs)
-  TyParams_ _constr xs = xs
-type TyParams t = TyParams_ t '[]
-
-class ReflTyParams (xs :: [Type]) where
-  reflTyParams :: [Flowable]
-
-instance ReflTyParams '[] where
-  reflTyParams = []
-
-instance (FlowCallable x, ReflTyParams xs) => ReflTyParams (x ': xs) where
-  reflTyParams = (Flowable (Proxy :: Proxy x)) : reflTyParams @xs
 
 type family FlowDeconstructField (k :: t) :: (Symbol, Type)
 type instance FlowDeconstructField '(a, b) = '(a, b)
