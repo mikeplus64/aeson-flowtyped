@@ -822,13 +822,15 @@ pattern FC a = Fix (Compose a)
 
 instance (KnownSymbol conName, GFlowRecord r) =>
          GFlowVal (C1 ('MetaCons conName fx 'True) r) where
-  gflowVal opt p = noInfo $ case sumEncoding opt of
-    TaggedObject tfn _ -> ExactObject $!
-      H.insert (T.pack tfn) (noInfo (Tag tagName))
-      next
-    UntaggedValue -> Object next
-    ObjectWithSingleField -> ExactObject (H.fromList [(tagName, noInfo (Object next))])
-    TwoElemArray -> Tuple (V.fromList [noInfo (Tag tagName), noInfo (Object next)])
+  gflowVal opt p
+    | H.size next == 1 = head (H.elems next)
+    | otherwise = noInfo $ case sumEncoding opt of
+      TaggedObject tfn _ -> ExactObject $!
+        H.insert (T.pack tfn) (noInfo (Tag tagName))
+        next
+      UntaggedValue -> Object next
+      ObjectWithSingleField -> ExactObject (H.fromList [(tagName, noInfo (Object next))])
+      TwoElemArray -> Tuple (V.fromList [noInfo (Tag tagName), noInfo (Object next)])
     where
       omitNothings =
         if omitNothingFields opt
