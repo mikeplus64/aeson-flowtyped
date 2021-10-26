@@ -38,6 +38,7 @@ module Data.Aeson.Flow
   , pattern FObjectMap
   , pattern FArray
   , pattern FTuple
+  , pattern FLabelledTuple
   , pattern FFun
   , pattern FAlt
   , pattern FPrim
@@ -142,6 +143,7 @@ data FlowTypeF a
   | ObjectMap !Text a a
   | Array a
   | Tuple !(Vector a)
+  | LabelledTuple !(Vector (Maybe Text, a))
   | Fun !(Vector (Text, a)) a
   | Alt a a
   | Prim !PrimType
@@ -241,6 +243,9 @@ pattern FArray a = Fix (Array a)
 
 pattern FTuple :: Vector FlowType -> FlowType
 pattern FTuple a = Fix (Tuple a)
+
+pattern FLabelledTuple :: Vector (Maybe Text, FlowType) -> FlowType
+pattern FLabelledTuple a = Fix (LabelledTuple a)
 
 pattern FFun :: Vector (Text, FlowType) -> FlowType -> FlowType
 pattern FFun v t = Fix (Fun v t)
@@ -418,6 +423,13 @@ pp (Fix ft) = case ft of
   -- [x, y, z]
   Tuple t ->
     PP.list <$> mapM pp (V.toList t)
+
+  -- [l1: x, y, l2: z]
+  LabelledTuple t -> PP.list <$> mapM
+    (\(mlbl, ty) -> case mlbl of
+        Just lbl -> ((text lbl PP.<> PP.string ":") PP.<+>) <$> pp ty
+        Nothing -> pp ty)
+    (V.toList t)
 
   Alt a b ->
     ppAlts [a] b
@@ -932,7 +944,8 @@ instance (FlowCallable a) => FlowTyped (VS.Vector a) where
   flowTypeName _ = Nothing
 
 instance ( FlowCallable a
-         , FlowCallable b) => FlowTyped (a, b) where
+         , FlowCallable b
+         ) => FlowTyped (a, b) where
   flowTypeName _ = Nothing
   flowType _ =
     FTuple (V.fromList [aFt, bFt])
