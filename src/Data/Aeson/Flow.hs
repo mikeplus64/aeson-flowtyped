@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes       #-}
+{-# LANGUAGE ConstraintKinds           #-}
 {-# LANGUAGE CPP                       #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DefaultSignatures         #-}
@@ -585,9 +587,9 @@ typeScriptModuleOptions = ModuleOptions
   }
 
 data Export where
-  Export :: (FlowCallable a) => Proxy a -> Export
+  Export :: FlowCallable a => Proxy a -> Export
 
-export :: forall a. (FlowCallable a) => Export
+export :: forall a. FlowCallable a => Export
 export = Export (Proxy :: Proxy a)
 
 instance Eq Export where
