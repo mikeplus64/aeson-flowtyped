@@ -17,6 +17,7 @@
 {-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE TemplateHaskell           #-}
+{-# LANGUAGE TypeApplications          #-}
 {-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE TypeInType                #-}
 {-# LANGUAGE TypeOperators             #-}
@@ -28,11 +29,10 @@
 module Data.Aeson.Flow
   ( -- * AST types
     FlowTyped (..)
-  , flowTypePreferName
+  , callType
   , FlowTypeF
   , FlowType
   -- , Fix (..)
-  , Var (..)
   , pattern FObject
   , pattern FExactObject
   , pattern FObjectMap
@@ -46,19 +46,22 @@ module Data.Aeson.Flow
   , pattern FPrimString
   , pattern FPrimBottom
   , pattern FPrimMixed
+  , pattern FPrimUnknown
+  , pattern FPrimNull
+  , pattern FPrimNever
+  , pattern FPrimUndefined
   , pattern FPrimAny
   , pattern FNullable
   , pattern FOmitable
   , pattern FLiteral
   , pattern FTag
   , pattern FName
-  , pattern FInstantiate
-  , pattern FPolyVar
-  , pattern FPolyUse
-  , pattern FPolyApply
+  , pattern FGenericParam
+  , pattern FCallType
     -- * Code generation
     -- ** Wholesale ES6/flow modules
-  , Export (..)
+  , Export
+  , export
   , RenderMode (..)
   , RenderOptions (..)
   , ModuleOptions (..)
@@ -76,7 +79,9 @@ module Data.Aeson.Flow
   , exportsDependencies
   , dependencies
     -- * Utility
+  , FlowCallable
   , FlowName (..)
+  , Flowable (..)
   , FlowTyFields (..)
   , FlowDeconstructField
   , Typeable
@@ -105,6 +110,7 @@ import           Data.List                        (foldl')
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as M
 import           Data.Maybe
+import           Data.Semigroup hiding (Any)
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific                  (Scientific)
@@ -127,6 +133,8 @@ import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen          as PP
 import qualified Type.Reflection                  as TR
 
+import Debug.Trace
+
 -- | The main AST for flowtypes.
 data FlowTypeF a
   = Object !(HashMap Text a)
@@ -141,11 +149,9 @@ data FlowTypeF a
   | Omitable a -- ^ omitable when null or undefined
   | Literal !A.Value
   | Tag !Text
-  | Name !FlowName
-  | Instantiate !TypeRep a
-  | PolyVar !TypeRep
-  | PolyUse !Flowable
-  | PolyApply a [a]
+  | GenericParam !Int
+  | CallType !FlowName [a]
+  | SomeFlowType !Flowable
   deriving (Show, Eq, Functor, Traversable, Foldable)
 
 -- | A primitive flow/javascript type
@@ -162,10 +168,10 @@ data PrimType
 
 -- | A name for a flowtyped data-type. These are returned by 'dependencies'.
 data FlowName where
-  FlowName :: (Typeable a, FlowTyped a) => Proxy a -> Text -> FlowName
+  FlowName :: (FlowCallable a) => Proxy a -> Text -> FlowName
 
 data Flowable where
-  Flowable :: (Typeable a, FlowTyped a) => Proxy a -> Flowable
+  Flowable :: (FlowCallable a) => Proxy a -> Flowable
 
 data Showy f a = forall s. Reifies s (Int -> a -> ShowS) => Showy (f (Inj s a))
 instance Show1 (Showy FlowTypeF) where
@@ -260,8 +266,20 @@ pattern FPrimBottom = FPrim Bottom
 pattern FPrimMixed :: FlowType
 pattern FPrimMixed = FPrim Mixed
 
+pattern FPrimUnknown :: FlowType
+pattern FPrimUnknown = FPrim Mixed
+
 pattern FPrimAny :: FlowType
 pattern FPrimAny = FPrim Any
+
+pattern FPrimNever :: FlowType
+pattern FPrimNever = FPrim Bottom
+
+pattern FPrimNull :: FlowType
+pattern FPrimNull = FPrim Null
+
+pattern FPrimUndefined :: FlowType
+pattern FPrimUndefined = FPrim Undefined
 
 pattern FNullable :: FlowType -> FlowType
 pattern FNullable a = Fix (Nullable a)
@@ -276,19 +294,13 @@ pattern FTag :: Text -> FlowType
 pattern FTag a = Fix (Tag a)
 
 pattern FName :: FlowName -> FlowType
-pattern FName a = Fix (Name a)
+pattern FName a = Fix (CallType a [])
 
-pattern FInstantiate :: TypeRep -> FlowType -> FlowType
-pattern FInstantiate ty a = Fix (Instantiate ty a)
+pattern FGenericParam :: Int -> FlowType
+pattern FGenericParam a = Fix (GenericParam a)
 
-pattern FPolyVar :: TypeRep -> FlowType
-pattern FPolyVar a = Fix (PolyVar a)
-
-pattern FPolyUse :: Flowable -> FlowType
-pattern FPolyUse a = Fix (PolyUse a)
-
-pattern FPolyApply :: FlowType -> [FlowType] -> FlowType
-pattern FPolyApply f xs = Fix (PolyApply f xs)
+pattern FCallType :: FlowName -> [FlowType] -> FlowType
+pattern FCallType f xs = Fix (CallType f xs)
 
 --------------------------------------------------------------------------------
 
@@ -316,7 +328,7 @@ text = PP.text . T.unpack
 squotes :: Text -> PP.Doc
 squotes = PP.squotes . text . T.replace "'" "\\'"
 
-type Poly = ReaderT RenderOptions (State (Map TypeRep Text))
+type Poly = ReaderT RenderOptions (Reader [Flowable])
 
 ppAlts :: [FlowType] -> FlowType -> Poly PP.Doc
 ppAlts alts (Fix f) = case f of
@@ -376,15 +388,6 @@ ppObject = mapM ppField . H.toList
           -- key: type
           (\fty'' -> text name PP.<> PP.colon PP.<+> fty'') <$> pp fty'
 
-getVar :: TypeRep -> Poly Text
-getVar rep = do
-  s <- get
-  case M.lookup rep s of
-    Just i -> return i
-    Nothing -> do
-      let r = polyVarNames !! M.size s
-      r <$ modify' (M.insert rep r)
-
 polyVarNames :: [Text]
 polyVarNames =
   map T.singleton ['A'..'Z'] ++
@@ -441,7 +444,7 @@ pp (Fix ft) = case ft of
     (\a' -> PP.text "null" PP.<+> PP.string "|" PP.<+> a') <$> pp a
 
   Omitable a ->
-    error "XXX Data.Aeson.Flow this error should be impossible to encounter"
+    pp (FNullable a)
 
   Literal a ->
     return (ppJson a)
@@ -449,63 +452,71 @@ pp (Fix ft) = case ft of
   Tag t ->
     return (squotes t)
 
-  Name (FlowName _ t) ->
+  GenericParam ix -> do
+    opts <- ask
+    params <- lift ask
+    let ft | ix < length params = case params !! ix of
+               Flowable p -> callType p
+           | otherwise = FPrimNever
+    let r = runReaderT (pp ft) opts `runReader` []
+    return r
+
+  CallType (FlowName _ t) [] ->
     return (text t)
 
-  PolyVar rep ->
-    text <$> getVar rep
-
-  PolyUse (Flowable fp) ->
-    pp (flowTypePreferName fp)
-
-  PolyApply a vars -> do
-    n  <- pp a
-    vs <- mapM pp vars
-    return (n PP.<> PP.angles (PP.hsep (PP.punctuate PP.comma vs)))
+  CallType (FlowName _ t) args -> do
+    vs <- mapM pp args
+    return (text t PP.<> PP.angles (PP.hsep (PP.punctuate PP.comma vs)))
 
   _ ->
     return (PP.string (show ft))
 
 -- | Pretty-print a flowtype in flowtype syntax
-renderTypeWithOptions :: RenderOptions -> FlowType -> (PP.Doc, Map TypeRep Text)
-renderTypeWithOptions opts ft = runState (pp ft `runReaderT` opts) M.empty
+renderTypeWithOptions :: RenderOptions -> FlowType -> [Flowable] -> PP.Doc
+renderTypeWithOptions opts ft params =
+  (pp ft `runReaderT` opts) `runReader` params
 
 -- | Pretty-print a flowtype in flowtype syntax
-showFlowType :: FlowType -> Text
-showFlowType =
-  T.pack . show . fst . renderTypeWithOptions RenderOptions{renderMode=RenderFlow}
+showFlowType :: FlowType -> [Flowable] -> Text
+showFlowType ft params =
+  T.pack . show $ renderTypeWithOptions RenderOptions{renderMode=RenderFlow} ft params
 
 -- | Pretty-print a flowtype in flowtype syntax
-showTypeScriptType :: FlowType -> Text
-showTypeScriptType =
-  T.pack . show . fst . renderTypeWithOptions RenderOptions{renderMode=RenderTypeScript}
+showTypeScriptType :: FlowType -> [Flowable] -> Text
+showTypeScriptType ft params =
+  T.pack . show $ renderTypeWithOptions RenderOptions{renderMode=RenderTypeScript} ft params
 
 --------------------------------------------------------------------------------
 -- Module exporting
 
 -- | Generate a @ export type @ declaration.
-exportTypeAs :: RenderOptions -> Text -> FlowType -> Text
+exportTypeAs :: RenderOptions -> Text -> FlowType -> [Flowable] -> Text
 exportTypeAs opts = showTypeAs opts True
 
 -- | Generate a @ type @ declaration, possibly an export.
-showTypeAs :: RenderOptions -> Bool -> Text -> FlowType -> Text
-showTypeAs opts isExport name ft =
+showTypeAs :: RenderOptions -> Bool -> Text -> FlowType -> [Flowable] -> Text
+showTypeAs opts isExport name ft params =
   T.pack . render $
-  PP.string (if isExport then "export type " else "type ") PP.<>
-  PP.string (T.unpack name) PP.<> withVars (renderTypeWithOptions opts ft)
+  PP.string (if isExport then "export type " else "type ")
+  PP.<> text name
+  PP.<> renderedParams
+  PP.<+> text "="
+  PP.<+> PP.indent 2 renderedTypeDecl
+  PP.<> text ";"
   PP.<> PP.linebreak
   where
-    main r = PP.string "=" PP.<$> PP.indent 2 r PP.<> PP.string ";"
-    withVars (r, vars)
-      | M.null vars = PP.space PP.<> main r
-      | otherwise = PP.angles (PP.hsep
-                               (PP.punctuate PP.comma (map text (M.elems vars))))
-                    PP.<+>
-                    main r
+    renderedTypeDecl = renderTypeWithOptions opts ft params
+    renderedParams
+      | null params = mempty
+      | otherwise =
+        PP.angles (PP.hsep
+                   (PP.punctuate PP.comma
+                    (map text (take (length params) polyVarNames))))
+
     render = ($[]) . PP.displayS . PP.renderPretty 1.0 80
 
 -- | Compute all the dependencies of a 'FlowTyped' thing, including itself.
-dependencies :: (Typeable a, FlowTyped a) => Proxy a -> Set.Set FlowName
+dependencies :: (FlowCallable a) => Proxy a -> Set.Set FlowName
 dependencies p0 =
   (case flowTypeName p0 of
      Just t -> Set.insert (FlowName p0 t)
@@ -515,8 +526,8 @@ dependencies p0 =
     flowNameToFlowable (FlowName fn _) = Flowable fn
 
     immediateDeps :: FlowType -> Set.Set FlowName
-    immediateDeps (FName n) = Set.singleton n
-    immediateDeps (Fix p)   = foldMap immediateDeps p
+    immediateDeps (FCallType n tys) = Set.insert n (Set.unions (map immediateDeps tys))
+    immediateDeps (Fix p)           = foldMap immediateDeps p
 
     transitiveDeps
       :: Flowable
@@ -559,46 +570,38 @@ typeScriptModuleOptions = ModuleOptions
   }
 
 data Export where
-  Export :: (Typeable a, FlowTyped a) => Proxy a -> Export
-  RawExport :: Text -> FlowType -> Export
+  Export :: (FlowCallable a) => Proxy a -> Export
+
+export :: forall a. (FlowCallable a) => Export
+export = Export (Proxy :: Proxy a)
 
 instance Eq Export where
   Export p0 == Export p1 =
     flowTypeName p0 == flowTypeName p1 ||
     typeRep p0 == typeRep p1
-  RawExport n0 t0 == RawExport n1 t1 = n0 == n1 && t0 == t1
 
 exportsDependencies :: [Export] -> Set.Set FlowName
 exportsDependencies = foldMap $ \e -> case e of
   Export a -> dependencies a
-  RawExport _ _ -> mempty
 
 generateModule :: ModuleOptions -> [Export] -> Text
 generateModule opts exports = T.unlines $
-  ((\m -> (pragmas opts ++ map ("// " `T.append`) (header opts)) ++
-          (T.empty : m))
-    . map flowDecl
-    . flowNames
-    $ exports) ++
-  rawExports
+  (\m -> (pragmas opts ++ map ("// " `T.append`) (header opts)) ++
+         (T.empty : m))
+  . map flowDecl
+  . flowNames
+  $ exports
   where
-    rawExports = catMaybes $ map
-      (\ex -> case ex of
-        RawExport t n -> Just (showTypeAs (renderOptions opts) True t n)
-        Export _ -> Nothing)
-      exports
-
     flowNames =
       if computeDeps opts
       then Set.toList . exportsDependencies
       else catMaybes . map (\ex -> case ex of
-                               Export p -> FlowName p <$> flowTypeName p
-                               _ -> Nothing)
+        Export p -> FlowName p <$> flowTypeName p)
 
     flowDecl (FlowName p name) =
       if Export p `elem` exports || exportDeps opts
-      then showTypeAs (renderOptions opts) True name (flowType p)
-      else showTypeAs (renderOptions opts) False name (flowType p)
+      then showTypeAs (renderOptions opts) True name (flowType p) (flowTypeVars p)
+      else showTypeAs (renderOptions opts) False name (flowType p) (flowTypeVars p)
 
 writeModule :: ModuleOptions -> FilePath -> [Export] -> IO ()
 writeModule opts path =
@@ -633,26 +636,27 @@ defaultFlowTypeName p
                                 -- that's allowed in Haskell, other than type
                                 -- operators... TODO, rename type operators
 
-flowTypePreferName :: (Typeable a, FlowTyped a) => Proxy a -> FlowType
-flowTypePreferName p = fromMaybe (flowType p) (flowTypeRecur p)
 
-flowTypeRecur :: (Typeable a, FlowTyped a) => Proxy a -> Maybe FlowType
-flowTypeRecur p = case flowTypeName p of
-  Just n
-    | null vars -> Just name
-    | otherwise -> Just (FPolyApply name (map doPoly vars))
-    where
-      doPoly :: TypeRep -> FlowType
-      doPoly = FPolyVar
-      vars = flowTypeVars p
-      name = FName (FlowName p n)
-  Nothing -> Nothing
+callType' :: (FlowCallable a) => Proxy a -> [FlowType] -> FlowType
+callType' p args = case flowTypeName p of
+  Just n -> FCallType (FlowName p n) args
+  Nothing -> flowType p
+  where
+    vars = flowTypeVars p
+
+callType :: forall a. FlowCallable a => Proxy a -> FlowType
+callType p = callType' p
+  (map (\(Flowable t) -> callType t)
+  (reflTyParams @(TyParams a)))
+
+class (ReflTyParams (TyParams a), Typeable a, FlowTyped a) => FlowCallable a
+instance (ReflTyParams (TyParams a), Typeable a, FlowTyped a) => FlowCallable a
 
 class FlowTyped a where
   flowType :: Proxy a -> FlowType
   flowTypeName :: Proxy a -> Maybe Text
 
-  flowTypeVars :: Proxy a -> [TypeRep]
+  flowTypeVars :: Proxy a -> [Flowable]
   flowTypeVars _ = []
 
   flowOptions :: Proxy a -> Options
@@ -670,7 +674,28 @@ class FlowTyped a where
     -> Maybe Text
   flowTypeName = defaultFlowTypeName
 
+data Param (p :: Nat) = Param
+
 --------------------------------------------------------------------------------
+
+type family NumTyParams_ (k :: t) (acc :: Nat) :: Nat where
+  NumTyParams_ (f x) acc = NumTyParams_ f (1 + acc)
+  NumTyParams_ _t acc = acc
+type NumTyParams t = NumTyParams_ t 0
+
+type family TyParams_ (t :: k) (xs :: [Type]):: [Type] where
+  TyParams_ (f x) xs = TyParams_ f (x ': xs)
+  TyParams_ _constr xs = xs
+type TyParams t = TyParams_ t '[]
+
+class ReflTyParams (xs :: [Type]) where
+  reflTyParams :: [Flowable]
+
+instance ReflTyParams '[] where
+  reflTyParams = []
+
+instance (FlowCallable x, ReflTyParams xs) => ReflTyParams (x ': xs) where
+  reflTyParams = (Flowable (Proxy :: Proxy x)) : reflTyParams @xs
 
 type family FlowDeconstructField (k :: t) :: (Symbol, Type)
 type instance FlowDeconstructField '(a, b) = '(a, b)
@@ -826,10 +851,10 @@ instance (KnownSymbol conName, GFlowRecord r) =>
     where
       omitNothings =
         if omitNothingFields opt
-        then H.map $ \(Fix t) -> Fix $ case t of
-          Nullable a -> Omitable a
+        then H.map $ \t -> case t of
+          FNullable a -> FOmitable a
           _          -> t
-        else id
+        else traceShow opt id
 
       next =
         H.map
@@ -855,9 +880,9 @@ instance (KnownSymbol conName, GFlowVal r) =>
 instance GFlowVal f => GFlowVal (M1 i ('MetaSel mj du ds dl) f) where
   gflowVal opt p = gflowVal opt (fmap unM1 p)
 
-instance (Typeable r, FlowTyped r) => GFlowVal (Rec0 r) where
+instance FlowCallable r => GFlowVal (Rec0 r) where
   gflowVal _opt (p :: r' x) =
-    cata noInfo (flowTypePreferName (fmap unK1 p))
+    cata noInfo (callType (fmap unK1 p))
 
 instance (GFlowVal a, GFlowVal b) => GFlowVal (a :+: b) where
   gflowVal opt _ = noInfo
@@ -903,91 +928,91 @@ instance (GFlowRecord f, GFlowRecord g) =>
 --------------------------------------------------------------------------------
 -- Instances
 
-instance (Typeable a, FlowTyped a) => FlowTyped [a] where
-  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
+instance (FlowCallable a) => FlowTyped [a] where
+  flowType _ = FArray (callType (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
-instance (FlowTyped a, Typeable a) => FlowTyped (Vector a) where
-  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
+instance (FlowCallable a) => FlowTyped (Vector a) where
+  flowType _ = FArray (callType (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
-instance (FlowTyped a, Typeable a) => FlowTyped (VU.Vector a) where
-  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
+instance (FlowCallable a) => FlowTyped (VU.Vector a) where
+  flowType _ = FArray (callType (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
-instance (FlowTyped a, Typeable a) => FlowTyped (VS.Vector a) where
-  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
+instance (FlowCallable a) => FlowTyped (VS.Vector a) where
+  flowType _ = FArray (callType (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
-instance ( FlowTyped a, Typeable a
-         , FlowTyped b, Typeable b) => FlowTyped (a, b) where
+instance ( FlowCallable a
+         , FlowCallable b) => FlowTyped (a, b) where
   flowTypeName _ = Nothing
   flowType _ =
     FTuple (V.fromList [aFt, bFt])
     where
-      aFt = flowTypePreferName (Proxy :: Proxy a)
-      bFt = flowTypePreferName (Proxy :: Proxy b)
+      aFt = callType (Proxy :: Proxy a)
+      bFt = callType (Proxy :: Proxy b)
 
-instance (FlowTyped a, Typeable a) => FlowTyped (Maybe a) where
-  flowType _ = FNullable (flowTypePreferName (Proxy :: Proxy a))
+instance (FlowCallable a) => FlowTyped (Maybe a) where
+  flowType _ = FNullable (callType (Proxy :: Proxy a))
   isPrim _ = True
   flowTypeName _ = Nothing
 
-instance ( FlowTyped a, Typeable a
-         , FlowTyped b, Typeable b) =>
+instance ( FlowCallable a
+         , FlowCallable b) =>
          FlowTyped (Either a b) where
   flowTypeName _ = Nothing
   flowType _ = FAlt
     (FExactObject (H.fromList [("Left", aFt)]))
     (FExactObject (H.fromList [("Right", bFt)]))
     where
-      aFt = flowTypePreferName (Proxy :: Proxy a)
-      bFt = flowTypePreferName (Proxy :: Proxy b)
+      aFt = callType (Proxy :: Proxy a)
+      bFt = callType (Proxy :: Proxy b)
 
-instance ( FlowTyped a, Typeable a
-         , FlowTyped b, Typeable b
-         , FlowTyped c, Typeable c) =>
+instance ( FlowCallable a
+         , FlowCallable b
+         , FlowCallable c) =>
          FlowTyped (a, b, c) where
   flowTypeName _ = Nothing
   flowType _ = FTuple (V.fromList [aFt, bFt, cFt])
     where
-      aFt = flowTypePreferName (Proxy :: Proxy a)
-      bFt = flowTypePreferName (Proxy :: Proxy b)
-      cFt = flowTypePreferName (Proxy :: Proxy c)
+      aFt = callType (Proxy :: Proxy a)
+      bFt = callType (Proxy :: Proxy b)
+      cFt = callType (Proxy :: Proxy c)
 
-instance ( FlowTyped a, Typeable a
-         , FlowTyped b, Typeable b
-         , FlowTyped c, Typeable c
-         , FlowTyped d, Typeable d
+instance ( FlowCallable a
+         , FlowCallable b
+         , FlowCallable c
+         , FlowCallable d
          ) =>
          FlowTyped (a, b, c, d) where
   flowTypeName _ = Nothing
   flowType _ = FTuple (V.fromList [aFt, bFt, cFt, dFt])
     where
-      aFt = flowTypePreferName (Proxy :: Proxy a)
-      bFt = flowTypePreferName (Proxy :: Proxy b)
-      cFt = flowTypePreferName (Proxy :: Proxy c)
-      dFt = flowTypePreferName (Proxy :: Proxy d)
+      aFt = callType (Proxy :: Proxy a)
+      bFt = callType (Proxy :: Proxy b)
+      cFt = callType (Proxy :: Proxy c)
+      dFt = callType (Proxy :: Proxy d)
 
-instance ( FlowTyped a, Typeable a
-         , FlowTyped b, Typeable b
-         , FlowTyped c, Typeable c
-         , FlowTyped d, Typeable d
-         , FlowTyped e, Typeable e
+instance ( FlowCallable a
+         , FlowCallable b
+         , FlowCallable c
+         , FlowCallable d
+         , FlowCallable e
          ) =>
          FlowTyped (a, b, c, d, e) where
   flowTypeName _ = Nothing
   flowType _ = FTuple (V.fromList [aFt, bFt, cFt, dFt, eFt])
     where
-      aFt = flowTypePreferName (Proxy :: Proxy a)
-      bFt = flowTypePreferName (Proxy :: Proxy b)
-      cFt = flowTypePreferName (Proxy :: Proxy c)
-      dFt = flowTypePreferName (Proxy :: Proxy d)
-      eFt = flowTypePreferName (Proxy :: Proxy e)
+      aFt = callType (Proxy :: Proxy a)
+      bFt = callType (Proxy :: Proxy b)
+      cFt = callType (Proxy :: Proxy c)
+      dFt = callType (Proxy :: Proxy d)
+      eFt = callType (Proxy :: Proxy e)
 
 instance FlowTyped Text where
   isPrim  _ = True
@@ -1034,27 +1059,30 @@ instance Typeable a => FlowTyped (Fixed a) where
   flowType _ = FPrimNumber
   flowTypeName _ = Nothing
 
-instance (Typeable a, Typeable k, FlowTyped a, FlowTyped k, A.ToJSONKey k) => FlowTyped (HashMap k a) where
+instance ( FlowCallable k
+         , FlowCallable a
+         , A.ToJSONKey k
+         ) => FlowTyped (HashMap k a) where
   -- XXX this is getting quite incoherent, what makes something "Prim" or not...
   isPrim _ = True
 
   flowType _ =
     case A.toJSONKey :: A.ToJSONKeyFunction k of
       A.ToJSONKeyText{} ->
-        FObjectMap "key" FPrimString (flowTypePreferName (Proxy :: Proxy a))
+        FObjectMap "key" FPrimString (callType (Proxy :: Proxy a))
 
       A.ToJSONKeyValue{} ->
         FArray (FTuple (V.fromListN 2
-                        [ flowTypePreferName (Proxy :: Proxy k)
-                        , flowTypePreferName (Proxy :: Proxy a)
+                        [ callType (Proxy :: Proxy k)
+                        , callType (Proxy :: Proxy a)
                         ]))
 
   flowTypeName _ =
     Nothing
 
-instance (Typeable a, FlowTyped a) => FlowTyped (Set.Set a) where
+instance (FlowCallable a) => FlowTyped (Set.Set a) where
   isPrim _ = False
-  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
+  flowType _ = FArray (callType (Proxy :: Proxy a))
   flowTypeName _ = Nothing
 
 instance FlowTyped IntSet.IntSet where
@@ -1062,37 +1090,30 @@ instance FlowTyped IntSet.IntSet where
   flowType _ = FArray FPrimNumber -- (Fix (Prim Number))
   flowTypeName _ = Nothing
 
-instance (Typeable a, FlowTyped a) => FlowTyped (I.IntMap a) where
+instance (FlowCallable a) => FlowTyped (I.IntMap a) where
   isPrim _ = False
   flowType _ = Fix . Array . Fix . Tuple . V.fromListN 2 $
     [ FPrimNumber
-    , flowTypePreferName (Proxy :: Proxy a)
+    , callType (Proxy :: Proxy a)
     ]
   flowTypeName _ = Nothing
 
-instance (Typeable a, FlowTyped a) => FlowTyped (HashSet.HashSet a) where
+instance (FlowCallable a) => FlowTyped (HashSet.HashSet a) where
   isPrim _ = False
-  flowType _ = FArray (flowTypePreferName (Proxy :: Proxy a))
-  flowTypeName _ = Nothing
-
-data Var :: k -> Type where Var :: Var a
-
-instance (Typeable a, Typeable k) => FlowTyped (Var (a :: k)) where
-  isPrim _ = False
-  flowType _ = FPolyVar (typeOf (Var :: Var a))
+  flowType _ = FArray (callType (Proxy :: Proxy a))
   flowTypeName _ = Nothing
 
 -- | This instance is defined recursively. You'll probably need to use
 -- 'dependencies' to extract a usable definition
-instance (FlowTyped a, Typeable a) => FlowTyped (Tree.Tree a) where
+instance (FlowCallable a) => FlowTyped (Tree.Tree a) where
   isPrim _ = False
   flowType _ = FTuple
     (V.fromList
-     [ FPolyUse (Flowable (Proxy :: Proxy a))
-     , FArray (fromJust (flowTypeRecur (Proxy :: Proxy (Tree.Tree a))))
+     [ FGenericParam 0
+     , FArray (callType' (Proxy :: Proxy (Tree.Tree a)) [FGenericParam 0])
      ])
   flowTypeName _ = Just "Tree"
-  flowTypeVars _ = [typeRep (Var :: Var a)]
+  flowTypeVars _ = [Flowable (Proxy :: Proxy a)]
 
 instance FlowTyped () where
   isPrim _ = False
