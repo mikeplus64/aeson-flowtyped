@@ -750,11 +750,13 @@ instance ( KnownSymbol name
 #if MIN_VERSION_aeson(1,2,0)
           removeSingleConstructorTag :: GFlowTypeI -> Maybe GFlowTypeI
           removeSingleConstructorTag gfi =
+            -- sumEncoding isn't used by aeson to determine the shape of single
+            -- constructor data types, but it is by GFlowVal, so we have to
+            -- check that first
             case sumEncoding opt of
               TaggedObject _tagKey contentsKey
                 | FC (Info (ExactObject hm)) <- gfi
-                , H.size hm == 2 ->
-                  Just (hm H.! T.pack contentsKey)
+                -> Just (FC (Info (ExactObject (H.delete (T.pack contentsKey) hm))))
               ObjectWithSingleField
                 | FC (Info (ExactObject hm)) <- gfi, H.size hm == 1
                 -> Just (head (H.elems hm))
