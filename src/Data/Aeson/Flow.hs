@@ -656,8 +656,6 @@ callType' :: (FlowCallable a) => Proxy a -> [FlowType] -> FlowType
 callType' p args = case flowTypeName p of
   Just n -> FCallType (FlowName p n) args
   Nothing -> flowType p
-  where
-    vars = flowTypeVars p
 
 callType :: forall a. FlowCallable a => Proxy a -> FlowType
 callType p = callType' p (map (\(Flowable t) -> callType t) (flowTypeVars p))
@@ -685,8 +683,6 @@ class FlowTyped a where
     => Proxy a
     -> Maybe Text
   flowTypeName = defaultFlowTypeName
-
-data Param (p :: Nat) = Param
 
 --------------------------------------------------------------------------------
 
@@ -732,9 +728,12 @@ class GFlowTyped g where
 class GFlowVal g where
   gflowVal :: Options -> Proxy (g x) -> GFlowTypeI
 
-instance (KnownSymbol name, GFlowVal c) =>
+instance ( KnownSymbol name
+         , GFlowVal c
+         ) =>
          GFlowTyped (D1 ('MetaData name mod pkg t) c) where
-  gflowType opt _ = runFlowI (postprocess (gflowVal opt (Proxy :: Proxy (c x))))
+  gflowType opt _
+    = runFlowI (postprocess (gflowVal opt (Proxy :: Proxy (c x))))
     where
       postprocess :: GFlowTypeI -> GFlowTypeI
       postprocess i
@@ -750,14 +749,22 @@ instance (KnownSymbol name, GFlowVal c) =>
         where
 #if MIN_VERSION_aeson(1,2,0)
           removeSingleConstructorTag :: GFlowTypeI -> Maybe GFlowTypeI
-          removeSingleConstructorTag (FC (Info (ExactObject hm))) =
+          removeSingleConstructorTag gfi =
             case sumEncoding opt of
-              TaggedObject tfn _ ->
-                Just (FC (Info (ExactObject (H.delete (T.pack tfn) hm))))
+              TaggedObject _tagKey contentsKey
+                | FC (Info (ExactObject hm)) <- gfi
+                , H.size hm == 2 ->
+                  Just (hm H.! T.pack contentsKey)
+              ObjectWithSingleField
+                | FC (Info (ExactObject hm)) <- gfi, H.size hm == 1
+                -> Just (head (H.elems hm))
+              TwoElemArray
+                | FC (Info (Tuple (V.toList -> [_k, v]))) <- gfi
+                -> Just v
+                | FC (Info (LabelledTuple (V.toList -> [_k, (_l, v)]))) <- gfi
+                -> Just v
               _ ->
                 Nothing
-          removeSingleConstructorTag _ =
-            Nothing
 #endif
 
           -- no-field constructors have a "contents" field of Prim Void
@@ -832,6 +839,7 @@ pattern Info a <- (discardInfo -> a)
 pattern FC :: f (g (Fix (Compose f g))) -> Fix (Compose f g)
 pattern FC a = Fix (Compose a)
 
+-- | @newtype@ constructors
 instance (KnownSymbol conName, GFlowRecord r) =>
          GFlowVal (C1 ('MetaCons conName fx 'True) r) where
   gflowVal opt p
@@ -850,14 +858,13 @@ instance (KnownSymbol conName, GFlowRecord r) =>
           FNullable a -> FOmitable a
           _          -> t
         else id
-
       next =
         H.map
         (cata noInfo)
         (omitNothings (gflowRecordFields opt (fmap unM1 p)))
-
       tagName = gconstrName opt p
 
+-- | @data@ constructors
 instance (KnownSymbol conName, GFlowVal r) =>
          GFlowVal (C1 ('MetaCons conName fx 'False) r) where
   gflowVal opt p = infoConstr tagName next $ case sumEncoding opt of
