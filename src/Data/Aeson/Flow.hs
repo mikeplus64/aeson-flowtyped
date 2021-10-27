@@ -753,10 +753,14 @@ instance ( KnownSymbol name
             -- sumEncoding isn't used by aeson to determine the shape of single
             -- constructor data types, but it is by GFlowVal, so we have to
             -- check that first
+            --
+            -- TODO gflowVal should just have different behaviour for single
+            -- constructor things and delegate to specific classes like
+            -- gflowSumVal, gflowProdVal, gflowRecordSel etc
             case sumEncoding opt of
-              TaggedObject _tagKey contentsKey
+              TaggedObject tagKey _contentsKey
                 | FC (Info (ExactObject hm)) <- gfi
-                -> Just (FC (Info (ExactObject (H.delete (T.pack contentsKey) hm))))
+                -> Just (FC (Info (ExactObject (H.delete (T.pack tagKey) hm))))
               ObjectWithSingleField
                 | FC (Info (ExactObject hm)) <- gfi, H.size hm == 1
                 -> Just (head (H.elems hm))
