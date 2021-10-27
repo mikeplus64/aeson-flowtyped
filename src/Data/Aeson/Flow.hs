@@ -134,9 +134,6 @@ import           Data.Word
 import           GHC.Generics
 import           GHC.TypeLits
 import qualified Text.PrettyPrint.Leijen          as PP
-import qualified Type.Reflection                  as TR
-
-import Debug.Trace
 
 -- | The main AST for flowtypes.
 data FlowTypeF a
@@ -207,13 +204,14 @@ instance Show FlowName where
   show (FlowName _ t) = show t
 
 instance Eq FlowName where
-  FlowName (t0 :: Proxy t0) n0 == FlowName (t1 :: Proxy t1) n1 =
-    case eqT :: Maybe (t0 :~: t1) of
-      Just Refl -> (t0, n0) == (t1, n1)
-      Nothing -> False
+  FlowName _t0 n0 == FlowName _t1 n1 =
+    n0 == n1
+    -- case eqT :: Maybe (t0 :~: t1) of
+    --   Just Refl -> (t0, n0) == (t1, n1)
+    --   Nothing -> False
 
 instance Ord FlowName where
-  FlowName t0 n0 `compare` FlowName t1 n1 = n0 `compare` n1
+  FlowName _t0 n0 `compare` FlowName _t1 n1 = n0 `compare` n1
   -- XXX this breaks using (typeRep t0, n0) `compare` (typeRep t1, n1) for some
   -- reason... dunno why
 
@@ -851,7 +849,7 @@ instance (KnownSymbol conName, GFlowRecord r) =>
         then H.map $ \t -> case t of
           FNullable a -> FOmitable a
           _          -> t
-        else traceShow opt id
+        else id
 
       next =
         H.map

@@ -1,40 +1,42 @@
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE AllowAmbiguousTypes       #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE OverloadedLists     #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-import           Data.Aeson            (Value)
-import           Data.Aeson.Flow       as Flow
-import           Data.Fix              (Fix (..))
+{-# LANGUAGE TypeApplications    #-}
+import           Data.Aeson                     ( Value )
+import           Data.Aeson.Flow               as Flow
+import           Data.Fix                       ( Fix(..) )
 import           Data.Functor.Foldable
-import           Data.HashMap.Strict   (HashMap)
-import           Data.Proxy            (Proxy (..))
-import           Data.Text             (Text)
-import           Data.Tree             (Tree)
-import           Data.Vector           (Vector)
+import           Data.HashMap.Strict            ( HashMap )
+import           Data.Maybe
+import           Data.Proxy                     ( Proxy(..) )
+import           Data.Text                      ( Text )
+import qualified Data.Text                     as T
+import           Data.Tree                      ( Tree )
+import           Data.Vector                    ( Vector )
 import           GHC.Generics
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
--- | Pretty-print a flowtype in flowtype syntax
-exportFlowTypeAs :: Text -> FlowType -> Text
-exportFlowTypeAs = exportTypeAs RenderOptions{renderMode=RenderFlow}
-
 data User = User
-  { username  :: Text
-  , realname  :: Maybe Text
-  , dob       :: Maybe (Int, Int, Int)
+  { username :: Text
+  , realname :: Maybe Text
+  , dob :: Maybe (Int, Int, Int)
   , extraInfo :: Value
-  } deriving (Generic)
+  }
+  deriving Generic
 
 instance FlowTyped User
 
 data Recur = Recur
-  { asdf   :: Int
-  , stuff  :: [User]
+  { asdf :: Int
+  , stuff :: [User]
   , recurs :: [Recur]
-  } deriving (Generic)
+  }
+  deriving Generic
 
 instance FlowTyped Recur
 
@@ -47,19 +49,21 @@ instance FlowTyped Adt3
 data Adt4 = A4 | B4 | C4 | D4 deriving (Generic)
 instance FlowTyped Adt4
 
-data Sub = Sub Adt4 deriving (Generic)
+data Sub = Sub Adt4
+  deriving Generic
 instance FlowTyped Sub
 
 data Codep = Codep
   { corecurs :: [Recur]
-  , cousers  :: [User]
-  , subsub   :: Sub
-  } deriving (Generic)
+  , cousers :: [User]
+  , subsub :: Sub
+  }
+  deriving Generic
 
 instance FlowTyped Codep
 
 data Hmap = Hmap (HashMap Text User)
-  deriving (Generic)
+  deriving Generic
 
 instance FlowTyped Hmap
 
@@ -68,117 +72,82 @@ data Poly2 a b = Poly2 a b | Poly2Go (Poly2 a b)
 
 instance (Typeable a, FlowTyped a, Typeable b, FlowTyped b) =>
          FlowTyped (Poly2 a b) where
-  flowTypeVars _ =
-    [ typeRep (Var :: Var a)
-    , typeRep (Var :: Var b)
-    ]
+  flowTypeVars _ = [Flowable (Proxy :: Proxy a), Flowable (Proxy :: Proxy b)]
 
 data Mono = Mono (Poly2 Int Bool) (Poly2 Bool Int)
-  deriving (Generic)
+  deriving Generic
 
 instance FlowTyped Mono
 
 main :: IO ()
-main = defaultMain $ testGroup "aeson-flowtyped"
-  [ testCase "nullable" $
-     showFlowType (flowType (Proxy :: Proxy (Maybe Int))) @=?
-     showFlowType (FNullable FPrimNumber)
-
+main = defaultMain $ testGroup
+  "aeson-flowtyped"
+  [ testCase "nullable" $ testShowFlow @(Maybe Int) @=? testShowRawFlow
+    (FNullable FPrimNumber)
   , testCase "array" $ do
-     showFlowType (flowType (Proxy :: Proxy [Int])) @=?
-       showFlowType (FArray FPrimNumber)
-
-     showFlowType (flowType (Proxy :: Proxy (Vector Int))) @=?
-       showFlowType (FArray FPrimNumber) -- (Fix (Array (Fix (Prim Number))))
+    testShowFlow @[Int] @=? testShowRawFlow (FArray FPrimNumber)
+    testShowFlow @(Vector Int) @=? testShowRawFlow (FArray FPrimNumber)
 
     -- XXX: actually use Eq
-
-  , testCase "User export" $
-    "export type User =\n\
+  , testCase "User export"
+  $ trimSpaces
+      "export type User =\n\
     \  {| extraInfo: mixed,\n\
     \     dob: null | [number,number,number],\n\
     \     username: string,\n\
-    \     realname: null | string |};" @=?
-    exportFlowTypeAs "User" (flowType (Proxy :: Proxy User))
-
-  , testCase "Recursive type export" $
-    "export type Recur =\n\
-    \  {| stuff: User[], recurs: Recur[], asdf: number |};" @=?
-    exportFlowTypeAs "Recur" (flowType (Proxy :: Proxy Recur))
-
-  , testCase "Nullary string tags (2 tags)" $
-    "export type Adt2 =\n\
-    \  'A2' |\n\
-    \  'B2';" @=?
-    exportFlowTypeAs "Adt2" (flowType (Proxy :: Proxy Adt2))
-
-  , testCase "Nullary string tags (3 tags)" $
-    "export type Adt3 =\n\
-    \  'A3' |\n\
-    \  'B3' |\n\
-    \  'C3';" @=?
-    exportFlowTypeAs "Adt3" (flowType (Proxy :: Proxy Adt3))
-
-  , testCase "Nullary string tags (4 tags)" $
-    "export type Adt4 =\n\
-    \  'A4' |\n\
-    \  'B4' |\n\
-    \  'C4' |\n\
-    \  'D4';" @=?
-    exportFlowTypeAs "Adt4" (flowType (Proxy :: Proxy Adt4))
-
-  , testCase "map-style object / hashmap instance" $
-    "export type Hmap =\n\
-    \  { [key: string]: User };" @=?
-    exportFlowTypeAs "Hmap" (flowType (Proxy :: Proxy (HashMap Text User)))
-
-  , testCase "parens around nullable array" $
-    "export type T =\n\
-    \  null | string[];" @=?
-    exportFlowTypeAs "T" (flowType (Proxy :: Proxy (Maybe [Text])))
-
-  , testCase "parens around nullable array of nullable elements" $
-    "export type T =\n\
-    \  null | (null | string)[];" @=?
-    exportFlowTypeAs "T" (flowType (Proxy :: Proxy (Maybe [Maybe Text])))
-
-  , testCase "export dependencies" $
-    [ FlowName (Proxy :: Proxy Codep) "Codep"
+    \     realname: null | string |};"
+  @=? exportFlowType @User
+  , testCase "Recursive type export"
+  $ trimSpaces
+      "export type Recur = {| stuff: User[], recurs: Recur[], asdf: number |};"
+  @=? exportFlowType @Recur
+  , testCase "Nullary string tags (2 tags)"
+  $ "export type Adt2 = 'A2' | 'B2';"
+  @=? exportFlowType @Adt2
+  , testCase "Nullary string tags (3 tags)"
+  $ "export type Adt3 = 'A3' | 'B3' | 'C3';"
+  @=? exportFlowType @Adt3
+  , testCase "Nullary string tags (4 tags)"
+  $ "export type Adt4 = 'A4' | 'B4' | 'C4' | 'D4';"
+  @=? exportFlowType @Adt4
+  , testCase "map-style object / hashmap instance"
+  $ "export type Hmap = { [key: string]: User };"
+  @=? exportFlowTypeAs @(HashMap Text User) "Hmap"
+  , testCase "parens around nullable array"
+  $ "export type T = null | string[];"
+  @=? exportFlowTypeAs @(Maybe [Text]) "T"
+  , testCase "parens around nullable array of nullable elements"
+  $ "export type T = null | (null | string)[];"
+  @=? exportFlowTypeAs @(Maybe [Maybe Text]) "T"
+  , testCase "export dependencies"
+  $ [ FlowName (Proxy :: Proxy Codep) "Codep"
     , FlowName (Proxy :: Proxy User) "User"
     , FlowName (Proxy :: Proxy Recur) "Recur"
     , FlowName (Proxy :: Proxy Sub) "Sub"
     , FlowName (Proxy :: Proxy Adt4) "Adt4"
-    ] @=?
-    exportsDependencies
-    [ Export (Proxy :: Proxy Codep)
     ]
-
-  , testCase "polymorphism (arity 1)" $
-    "// @flow\n\
-    \// This module has been generated by aeson-flowtyped.\n\n\
-    \export type Tree<A> =\n\
-    \  [A,Tree<A>[]];\n" @=?
-    generateModule flowModuleOptions
-    [ Export (Proxy :: Proxy (Tree (Var 0)))
-    ]
-
-  {-
-  , testCase "polymorphism (arity 2)" $
-    "// @flow\n\
+  @=? exportsDependencies [export @Codep]
+  , testCase "polymorphism (arity 1)"
+  $ T.unlines
+      [ "// @flow"
+      , "// This module has been generated by aeson-flowtyped."
+      , ""
+      , "export type Tree<A> =   [A,Tree<A>[]];"
+      , ""
+      ]
+  @=? generateModule flowModuleOptions [export @(Tree ())]
+  , testCase "polymorphism (arity 2)"
+  $ "// @flow\n\
     \// This module has been generated by aeson-flowtyped.\n\n\
     \export type Poly2<A, B> =\n\
     \  {| tag: 'Poly2', contents: [A,B] |} |\n\
-    \  {| tag: 'Poly2Go', contents: Poly2<A, B> |};\n" @=?
-    generateModule flowModuleOptions
-    [ Export (Proxy :: Proxy (Poly2 (Var 0) (Var 1)))
-    ]
-  -}
-
-  , testCase "monomorphic use of polymorphic type (dependencies)" $
-    [ FlowName (Proxy :: Proxy Mono) "Mono"
+    \  {| tag: 'Poly2Go', contents: Poly2<A, B> |};\n"
+  @=? generateModule flowModuleOptions [export @(Poly2 () ())]
+  , testCase "monomorphic use of polymorphic type (dependencies)"
+  $ [ FlowName (Proxy :: Proxy Mono) "Mono"
     , FlowName (Proxy :: Proxy (Poly2 () ())) "Poly2"
-    ] @=?
-    exportsDependencies [Export (Proxy :: Proxy Mono)]
+    ]
+  @=? exportsDependencies [export @Mono]
 
   {-
   , testCase "monomorphic use of polymorphic type" $
@@ -190,5 +159,27 @@ main = defaultMain $ testGroup "aeson-flowtyped"
     generateModule flowModuleOptions
     [Export (Proxy :: Proxy Mono)]
     -}
-
   ]
+
+-- | Pretty-print a flowtype in flowtype syntax
+exportFlowType :: forall a . (FlowTyped a, Typeable a) => Text
+exportFlowType =
+  exportFlowTypeAs @a (fromJust (flowTypeName (Proxy :: Proxy a)))
+
+-- | Pretty-print a flowtype in flowtype syntax
+exportFlowTypeAs :: forall a . (FlowTyped a, Typeable a) => Text -> Text
+exportFlowTypeAs name = trimSpaces
+  (exportTypeAs RenderOptions { renderMode = RenderFlow }
+                name
+                (flowType (Proxy :: Proxy a))
+                []
+  )
+
+trimSpaces :: Text -> Text
+trimSpaces = T.unwords . T.words . T.filter (\a -> a /= '\n')
+
+testShowFlow :: forall a . FlowCallable a => Text
+testShowFlow = trimSpaces (showFlowType (flowType (Proxy :: Proxy a)) [])
+
+testShowRawFlow :: FlowType -> Text
+testShowRawFlow t = trimSpaces (showFlowType t [])
