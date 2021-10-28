@@ -70,8 +70,7 @@ instance FlowTyped Hmap
 data Poly2 a b = Poly2 a b | Poly2Go (Poly2 a b)
   deriving (Generic)
 
-instance (Typeable a, FlowTyped a, Typeable b, FlowTyped b) =>
-         FlowTyped (Poly2 a b) where
+instance (FlowTyped a, FlowTyped b) => FlowTyped (Poly2 a b) where
   flowTypeVars _ = [Flowable (Proxy :: Proxy a), Flowable (Proxy :: Proxy b)]
 
 data Mono = Mono (Poly2 Int Bool) (Poly2 Bool Int)
@@ -162,12 +161,12 @@ main = defaultMain $ testGroup
   ]
 
 -- | Pretty-print a flowtype in flowtype syntax
-exportFlowType :: forall a . (FlowTyped a, Typeable a) => Text
+exportFlowType :: forall a . (FlowTyped a) => Text
 exportFlowType =
   exportFlowTypeAs @a (fromJust (flowTypeName (Proxy :: Proxy a)))
 
 -- | Pretty-print a flowtype in flowtype syntax
-exportFlowTypeAs :: forall a . (FlowTyped a, Typeable a) => Text -> Text
+exportFlowTypeAs :: forall a . (FlowTyped a) => Text -> Text
 exportFlowTypeAs name = trimSpaces
   (exportTypeAs RenderOptions { renderMode = RenderFlow }
                 name
@@ -178,7 +177,7 @@ exportFlowTypeAs name = trimSpaces
 trimSpaces :: Text -> Text
 trimSpaces = T.unwords . T.words . T.filter (\a -> a /= '\n')
 
-testShowFlow :: forall a . FlowCallable a => Text
+testShowFlow :: forall a . FlowTyped a => Text
 testShowFlow = trimSpaces (showFlowType (flowType (Proxy :: Proxy a)) [])
 
 testShowRawFlow :: FlowType -> Text
