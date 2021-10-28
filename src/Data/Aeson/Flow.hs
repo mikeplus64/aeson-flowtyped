@@ -1,12 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE LambdaCase       #-}
-{-# LANGUAGE BangPatterns       #-}
+{-# LANGUAGE LambdaCase                #-}
+{-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE ConstraintKinds           #-}
-{-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE DefaultSignatures         #-}
 {-# LANGUAGE DeriveAnyClass            #-}
-{-# LANGUAGE DeriveFoldable            #-}
-{-# LANGUAGE DeriveFunctor             #-}
 {-# LANGUAGE DeriveTraversable         #-}
 {-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -63,7 +60,7 @@ module Data.Aeson.Flow
   , pattern FGenericParam
   , pattern FCallType
     -- * Code generation
-    -- ** Wholesale ES6/flow modules
+    -- ** Wholesale ES6/flow/typescript modules
   , Export
   , export
   , RenderMode(..)
