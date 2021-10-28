@@ -777,10 +777,14 @@ flowTypeFromSOP opts di = case comments of
     (\case
       (SOP.Constructor constrName :: SOP.ConstructorInfo xs) ->
         let
-          tuple = FTuple . V.fromList $! SOP.hcfoldMap
-            (Proxy :: Proxy FlowTyped)
-            (\(Proxy :: SOP.Proxy x) -> [callType (Proxy :: Proxy x)])
-            (SOP.hpure Proxy :: SOP.NP Proxy xs)
+          value =
+            let tuple = V.fromList $! SOP.hcfoldMap
+                  (Proxy :: Proxy FlowTyped)
+                  (\(Proxy :: SOP.Proxy x) -> [callType (Proxy :: Proxy x)])
+                  (SOP.hpure Proxy :: SOP.NP Proxy xs)
+            in  case V.length tuple of
+                  1 -> V.head tuple
+                  _ -> FTuple tuple
 
           hasContents = Monoid.getAny $! SOP.hcfoldMap
             (Proxy :: Proxy SOP.Top)
@@ -793,7 +797,7 @@ flowTypeFromSOP opts di = case comments of
               -> [ FExactObject
                      (H.fromList
                        [ (tagFld, renderConstrTag constrName)
-                       , (T.pack contentsFld, tuple)
+                       , (T.pack contentsFld, value)
                        ]
                      )
                  ]
@@ -801,15 +805,16 @@ flowTypeFromSOP opts di = case comments of
               -> [ FExactObject
                      (H.singleton tagFld (renderConstrTag constrName))
                  ]
-            UntaggedValue -> [tuple]
+            UntaggedValue -> [value]
             ObjectWithSingleField ->
               [ FExactObject
                   (H.fromList
-                    [(T.pack (constructorTagModifier opts constrName), tuple)]
+                    [(T.pack (constructorTagModifier opts constrName), value)]
                   )
               ]
             TwoElemArray ->
-              [FTuple (V.fromListN 2 [renderConstrTag constrName, tuple])]
+              [FTuple (V.fromListN 2 [renderConstrTag constrName, value])]
+
       SOP.Record constrName flds ->
         let
           fldsList :: H.HashMap Text FlowType
