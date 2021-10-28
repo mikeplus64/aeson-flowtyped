@@ -507,7 +507,7 @@ showTypeAs opts isExport name ft params =
     PP.<> text name
     PP.<> renderedParams
     PP.<+> text "="
-    PP.<+> PP.indent 2 renderedTypeDecl
+    PP.<+> renderedTypeDecl
     PP.<> text ";"
     PP.<> PP.linebreak
  where
