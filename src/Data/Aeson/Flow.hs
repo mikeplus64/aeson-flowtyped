@@ -106,6 +106,7 @@ import qualified Data.IntMap.Strict            as I
 import qualified Data.IntSet                   as IntSet
 import qualified Data.Map.Strict               as M
 import           Data.Maybe
+import qualified Data.Monoid                   as Monoid
 import           Data.Proxy
 import           Data.Reflection
 import           Data.Scientific                ( Scientific )
@@ -775,20 +776,31 @@ flowTypeFromSOP opts di = case comments of
     (Proxy :: Proxy (SOP.All FlowTyped))
     (\case
       (SOP.Constructor constrName :: SOP.ConstructorInfo xs) ->
-        let tuple = FTuple . V.fromList $! SOP.hcfoldMap
-              (Proxy :: Proxy FlowTyped)
-              (\(Proxy :: SOP.Proxy x) -> [callType (Proxy :: Proxy x)])
-              (SOP.hpure Proxy :: SOP.NP Proxy xs)
+        let
+          tuple = FTuple . V.fromList $! SOP.hcfoldMap
+            (Proxy :: Proxy FlowTyped)
+            (\(Proxy :: SOP.Proxy x) -> [callType (Proxy :: Proxy x)])
+            (SOP.hpure Proxy :: SOP.NP Proxy xs)
+
+          hasContents = Monoid.getAny $! SOP.hcfoldMap
+            (Proxy :: Proxy SOP.Top)
+            (\_ -> Monoid.Any True)
+            (SOP.hpure Proxy :: SOP.NP Proxy xs)
         in
           case sumEncoding opts of
-            TaggedObject (T.pack -> tagFld) contentsFld ->
-              [ FExactObject
-                  (H.fromList
-                    [ (tagFld, renderConstrTag constrName)
-                    , (T.pack contentsFld, tuple)
-                    ]
-                  )
-              ]
+            TaggedObject (T.pack -> tagFld) contentsFld
+              | hasContents
+              -> [ FExactObject
+                     (H.fromList
+                       [ (tagFld, renderConstrTag constrName)
+                       , (T.pack contentsFld, tuple)
+                       ]
+                     )
+                 ]
+              | otherwise
+              -> [ FExactObject
+                     (H.singleton tagFld (renderConstrTag constrName))
+                 ]
             UntaggedValue -> [tuple]
             ObjectWithSingleField ->
               [ FExactObject
