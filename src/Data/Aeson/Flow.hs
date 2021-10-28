@@ -72,6 +72,9 @@ module Data.Aeson.Flow
   , writeModule
   , showTypeAs
   , exportTypeAs
+    -- ** Convenience for generating flowtypes from other types
+  , FlowTyFields(..)
+  , FlowDeconstructField
     -- ** TS specific
   , showTypeScriptType
     -- ** Flow specific
@@ -615,6 +618,41 @@ generateModule opts exports =
 
 writeModule :: ModuleOptions -> FilePath -> [Export] -> IO ()
 writeModule opts path = TIO.writeFile path . generateModule opts
+
+--------------------------------------------------------------------------------
+
+type family FlowDeconstructField (k :: t) :: (Symbol, *)
+type instance FlowDeconstructField '(a, b) = '(a, b)
+
+-- | Useful for declaring flowtypes from type-level key/value sets, like
+--
+-- @
+-- FlowTyFields :: FlowTyFields Person '['("name", String), '("email", String)]
+-- @
+data FlowTyFields :: * -> [k] -> * where
+  FlowTyFields ::FlowTyFields k fs
+
+class ReifyFlowTyFields a where
+  reifyFlowTyFields :: Proxy a -> HashMap Text FlowType -> HashMap Text FlowType
+
+instance ReifyFlowTyFields '[] where
+  reifyFlowTyFields _ = id
+
+instance ( FlowDeconstructField x ~ '(k, v)
+         , KnownSymbol k
+         , FlowTyped v
+         , ReifyFlowTyFields xs
+         ) =>
+         ReifyFlowTyFields (x:xs) where
+  reifyFlowTyFields _ acc =
+    reifyFlowTyFields (Proxy :: Proxy xs)
+      $! H.insert (T.pack (symbolVal (Proxy :: Proxy k)))
+                  (flowType (Proxy :: Proxy v))
+                  acc
+
+instance (FlowTyped a, ReifyFlowTyFields (fs :: [k]), Typeable fs, Typeable k) => FlowTyped (FlowTyFields a fs) where
+  flowType _ = FExactObject (reifyFlowTyFields (Proxy :: Proxy fs) H.empty)
+  flowTypeName _ = flowTypeName (Proxy :: Proxy a)
 
 --------------------------------------------------------------------------------
 
