@@ -82,6 +82,8 @@ module Data.Aeson.Flow
     -- * Utility
   , FlowName(..)
   , Flowable(..)
+  , defaultFlowTypeName
+  , defaultFlowType
   ) where
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
