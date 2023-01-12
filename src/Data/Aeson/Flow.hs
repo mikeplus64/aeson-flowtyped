@@ -91,6 +91,8 @@ module Data.Aeson.Flow
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import qualified Data.Aeson                    as A
+import qualified Data.Aeson.Key                as AK
+import qualified Data.Aeson.KeyMap             as AKM
 import           Data.Aeson.Types               ( Options(..)
                                                 , SumEncoding(..)
                                                 )
@@ -362,12 +364,12 @@ ppJson v = case v of
     (map
       (\(name, fty) ->
         PP.space
-          PP.<> text name
+          PP.<> text (AK.toText name)
           PP.<+> PP.colon
           PP.<+> ppJson fty
           PP.<> PP.space
       )
-      (H.toList obj)
+      (AKM.toList obj)
     )
 
 mayWrap :: FlowType -> PP.Doc -> PP.Doc
